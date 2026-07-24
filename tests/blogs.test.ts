@@ -83,6 +83,25 @@ describe('blog service foundation', () => {
     const trashed = blog({ status: 'trashed', statusBeforeTrash: 'published' }); vi.spyOn(Blog, 'findByPk').mockResolvedValue(trashed as never);
     await expect(service.restoreBlog('9', { id: '1', role: 'editor' })).resolves.toMatchObject({ status: 'unpublished' });
   });
+  it('returns draft and published content JSON in the blog list response', async () => {
+    const draftDoc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'draft body' }] }] };
+    const publishedDoc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'published body' }] }] };
+    vi.spyOn(Blog, 'findAndCountAll').mockResolvedValue({
+      rows: [blog({
+        currentDraftVersion: version({ contentJson: draftDoc }),
+        currentPublishedVersion: version({ id: '21', versionType: 'published', contentJson: publishedDoc }),
+        currentPublishedVersionId: '21'
+      })],
+      count: 1
+    } as never);
+
+    const result = await createBlogService().listBlogs({}, { id: '1', role: 'editor' });
+
+    expect(result.items[0]).toMatchObject({
+      draft_version: { content_json: draftDoc },
+      published_version: { content_json: publishedDoc }
+    });
+  });
 });
 
 describe('blog routes', () => {

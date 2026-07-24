@@ -1,11 +1,17 @@
-﻿import './index.js';
+import './index.js';
 import { Router } from 'express';
 import { authenticateAdmin, requireRole } from '../../middlewares/auth/authenticate-admin.js';
 import { createBlogController } from './blog.controller.js';
+import { createPublicBlogController } from './public-blog.controller.js';
 
 export function createBlogRouter(): Router {
   const router = Router();
   const controller = createBlogController();
+  const publicController = createPublicBlogController();
+
+  router.get('/public', publicController.list);
+  router.get('/public/:slug', publicController.detail);
+
   router.use(authenticateAdmin);
 
   router.get('/templates', controller.templates);

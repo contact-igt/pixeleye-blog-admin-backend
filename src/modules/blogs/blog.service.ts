@@ -1,4 +1,4 @@
-﻿import { Op, type Transaction, type WhereOptions } from 'sequelize';
+import { Op, type Transaction, type WhereOptions } from 'sequelize';
 import { sequelize } from '../../config/database.js';
 import { ApiError } from '../../utils/api-error.js';
 import { AdminUser, type AdminUserRole } from '../auth/index.js';
@@ -23,6 +23,7 @@ import {
   generateBlogHtmlFromJson,
   isBlogContentEmpty,
   normalizeBlogSlug,
+  publicBlogListQuerySchema,
   sanitizeGeneratedBlogHtml,
   updateBlogSchema,
   type BlogListQuery,
@@ -102,10 +103,28 @@ function serializeBlog(blog: any, includeContent = false) {
     has_unpublished_template_changes: hasUnpublishedTemplateChanges(data),
     ...(includeContent ? {
       draft_version: versionSummary(draft),
-      published_version: versionSummary(data.currentPublishedVersion ?? data.current_published_version, false),
+      published_version: versionSummary(data.currentPublishedVersion ?? data.current_published_version),
       creator: safeAdmin(data.creator),
       updater: safeAdmin(data.updater)
     } : {})
+  };
+}
+
+function serializePublicBlog(blog: any) {
+  const data = plain(blog);
+  const published = data.currentPublishedVersion ?? data.current_published_version;
+  return {
+    id: String(data.id),
+    title: published?.title ?? '',
+    slug: data.slug,
+    excerpt: published?.excerpt ?? null,
+    status: data.status,
+    featured_media: mediaSummary(data.featuredMedia),
+    author: safeAdmin(data.author),
+    published_at: data.publishedAt ?? data.published_at ?? null,
+    updated_at: data.updatedAt ?? data.updated_at,
+    created_at: data.createdAt ?? data.created_at,
+    published_version: versionSummary(published)
   };
 }
 
@@ -143,8 +162,13 @@ async function validateBlockMedia(document: BlogBlocksDocument, transaction?: Tr
   }
 }
 
+function parseContentJson(value: unknown): unknown {
+  if (typeof value === 'string') { try { return JSON.parse(value); } catch { return value; } }
+  return value;
+}
+
 function versionPayload(input: CreateBlogInput | UpdateBlogInput, template: BlogTemplateSnapshot) {
-  const contentJson = input.content_json ?? null;
+  const contentJson = input.content_json != null ? parseContentJson(input.content_json) : null;
   const blocksJson = normalizeBlogBlocks(input.blocks_json);
   return {
     title: input.title,
@@ -227,7 +251,7 @@ export function createBlogService() {
     async listBlogs(raw: unknown, actor: BlogActor) {
       const query = blogListQuerySchema.parse(raw); const include = includeBlog();
       const result = await Blog.findAndCountAll({ where: listWhere(query, actor), include, subQuery: false, limit: query.limit, offset: (query.page - 1) * query.limit, order: (query.sort_by === 'title' ? [[{ model: BlogVersion, as: 'currentDraftVersion' }, 'title', query.sort_order.toUpperCase()]] : [[blogSortColumns[query.sort_by], query.sort_order.toUpperCase()]]) as any, distinct: true });
-      return { items: result.rows.map((blog) => serializeBlog(blog)), pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count) };
+      return { items: result.rows.map((blog) => serializeBlog(blog, true)), pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count) };
     },
 
     async listTrashedBlogs(raw: unknown, actor: BlogActor) {
@@ -340,7 +364,53 @@ export function createBlogService() {
 
     async unpublishBlog(id: string, actor: BlogActor) { assertPublish(actor); if (!/^\d+$/.test(id)) throw new ApiError(400, 'Blog ID is invalid'); const blog = await Blog.findByPk(id); if (!blog) throw new ApiError(404, 'Blog was not found'); if (blog.status === 'unpublished') return serializeBlog(await Blog.findByPk(id, { include: includeBlog() }), true); if (blog.status !== 'published') throw new ApiError(409, 'Only published blogs can be unpublished'); await blog.update({ status: 'unpublished', unpublishedAt: new Date(), updatedBy: actor.id }); await writeAuthAuditLog({ action: 'BLOG_UNPUBLISHED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: blog.slug } }); return this.getBlog(id, actor); },
     async moveBlogToTrash(id: string, actor: BlogActor) { if (!/^\d+$/.test(id)) throw new ApiError(400, 'Blog ID is invalid'); const blog = await Blog.findByPk(id, { include: includeBlog() }); if (!blog) throw new ApiError(404, 'Blog was not found'); assertTrash(actor, blog); if (blog.status === 'trashed') return serializeBlog(blog, true); const previousStatus = blog.status; await blog.update({ statusBeforeTrash: previousStatus, status: 'trashed', trashedAt: new Date(), trashedBy: actor.id, updatedBy: actor.id }); await writeAuthAuditLog({ action: 'BLOG_MOVED_TO_TRASH', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: blog.slug, previous_status: previousStatus, new_status: 'trashed' } }); return serializeBlog(await Blog.findByPk(id, { include: includeBlog() }), true); },
-    async restoreBlog(id: string, actor: BlogActor) { assertRestore(actor); if (!/^\d+$/.test(id)) throw new ApiError(400, 'Blog ID is invalid'); const blog = await Blog.findByPk(id, { include: includeBlog() }); if (!blog) throw new ApiError(404, 'Blog was not found'); if (blog.status !== 'trashed') return serializeBlog(blog, true); const previous = blog.statusBeforeTrash; const restoredStatus: BlogStatus = previous === 'published' ? 'unpublished' : (previous ?? 'draft'); await blog.update({ status: restoredStatus, statusBeforeTrash: null, trashedAt: null, trashedBy: null, restoredAt: new Date(), restoredBy: actor.id, updatedBy: actor.id }); await writeAuthAuditLog({ action: 'BLOG_RESTORED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: blog.slug, previous_status: previous, new_status: restoredStatus } }); return serializeBlog(await Blog.findByPk(id, { include: includeBlog() }), true); }
+    async restoreBlog(id: string, actor: BlogActor) { assertRestore(actor); if (!/^\d+$/.test(id)) throw new ApiError(400, 'Blog ID is invalid'); const blog = await Blog.findByPk(id, { include: includeBlog() }); if (!blog) throw new ApiError(404, 'Blog was not found'); if (blog.status !== 'trashed') return serializeBlog(blog, true); const previous = blog.statusBeforeTrash; const restoredStatus: BlogStatus = previous === 'published' ? 'unpublished' : (previous ?? 'draft'); await blog.update({ status: restoredStatus, statusBeforeTrash: null, trashedAt: null, trashedBy: null, restoredAt: new Date(), restoredBy: actor.id, updatedBy: actor.id }); await writeAuthAuditLog({ action: 'BLOG_RESTORED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: blog.slug, previous_status: previous, new_status: restoredStatus } }); return serializeBlog(await Blog.findByPk(id, { include: includeBlog() }), true); },
+
+    async getPublicBlogBySlug(slug: string) {
+      const normalizedSlug = slug.trim().toLowerCase();
+      const blog = await Blog.findOne({
+        where: { slug: normalizedSlug, status: 'published' },
+        include: includeBlog()
+      });
+      if (!blog) throw new ApiError(404, 'Published blog post was not found');
+      const data = plain(blog);
+      if (!data.currentPublishedVersion && !data.current_published_version) {
+        throw new ApiError(404, 'Published version is unavailable');
+      }
+      return serializePublicBlog(blog);
+    },
+
+    async listPublicBlogs(rawQuery: unknown) {
+      const query = publicBlogListQuerySchema.parse(rawQuery);
+      const include = includeBlog();
+      const where: Record<string | symbol, unknown> = { status: 'published' };
+      if (query.search) {
+        const like = `%${query.search.replace(/[%_\\]/g, '\\$&')}%`;
+        where[Op.or] = [
+          { slug: { [Op.like]: like } },
+          { '$currentPublishedVersion.title$': { [Op.like]: like } },
+          { '$currentPublishedVersion.excerpt$': { [Op.like]: like } }
+        ];
+      }
+      const sortCol = query.sort_by === 'title'
+        ? [[{ model: BlogVersion, as: 'currentPublishedVersion' }, 'title', query.sort_order.toUpperCase()]]
+        : [[query.sort_by === 'published_at' ? 'publishedAt' : 'createdAt', query.sort_order.toUpperCase()]];
+
+      const result = await Blog.findAndCountAll({
+        where,
+        include,
+        subQuery: false,
+        limit: query.limit,
+        offset: (query.page - 1) * query.limit,
+        order: sortCol as any,
+        distinct: true
+      });
+
+      return {
+        items: result.rows.map((blog) => serializePublicBlog(blog)),
+        pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count)
+      };
+    }
   };
 }
 export type BlogService = ReturnType<typeof createBlogService>;
