@@ -35,7 +35,18 @@ export const authAuditActions = [
   'CUSTOM_TEMPLATE_ARCHIVED',
   'CUSTOM_TEMPLATE_RESTORED',
   'CUSTOM_TEMPLATE_DUPLICATED',
-  'CUSTOM_TEMPLATE_PERMANENTLY_DELETED'
+  'CUSTOM_TEMPLATE_PERMANENTLY_DELETED',
+  'CAMPAIGN_CREATED',
+  'CAMPAIGN_UPDATED',
+  'CAMPAIGN_QUEUED',
+  'CAMPAIGN_TEST_EMAIL_SENT',
+  'CAMPAIGN_RETRY_FAILED',
+  'CAMPAIGN_CANCELLED',
+  'SUBSCRIBER_CSV_EXPORTED',
+  'NEWSLETTER_SUBSCRIBER_CREATED',
+  'NEWSLETTER_SUBSCRIBER_VERIFICATION_RESENT',
+  'NEWSLETTER_SUBSCRIBER_DELETED',
+  'NEWSLETTER_SUBSCRIBER_ANONYMIZED'
 ] as const;
 
 export type AuthAuditAction = (typeof authAuditActions)[number];
@@ -58,12 +69,16 @@ function getAuditEntityId(context: AuditContext): string | null {
   const mediaAssetId = context.metadata?.media_asset_id;
   const blogId = context.metadata?.blog_id;
   const customTemplateId = context.metadata?.custom_template_id ?? context.metadata?.new_custom_template_id;
+  const subscriberId = context.metadata?.subscriber_id;
   if (context.action.startsWith('BLOG_') && (typeof blogId === 'string' || typeof blogId === 'number')) return String(blogId);
   if (context.action.startsWith('MEDIA_') && (typeof mediaAssetId === 'string' || typeof mediaAssetId === 'number')) {
     return String(mediaAssetId);
   }
   if (context.action.startsWith('CUSTOM_TEMPLATE_') && (typeof customTemplateId === 'string' || typeof customTemplateId === 'number')) {
     return String(customTemplateId);
+  }
+  if (context.action.startsWith('NEWSLETTER_SUBSCRIBER_') && (typeof subscriberId === 'string' || typeof subscriberId === 'number')) {
+    return String(subscriberId);
   }
   return context.adminUserId ?? null;
 }
@@ -78,7 +93,9 @@ export async function writeAuthAuditLog(context: AuditContext, transaction?: Tra
         ? 'blog'
         : context.action.startsWith('CUSTOM_TEMPLATE_')
           ? 'custom_template'
-          : 'admin_auth',
+          : context.action.startsWith('NEWSLETTER_SUBSCRIBER_')
+            ? 'newsletter_subscriber'
+            : 'admin_auth',
     entityId: getAuditEntityId(context),
     requestId: context.requestId ?? null,
     ipHash: hashRequestValue(context.ip),

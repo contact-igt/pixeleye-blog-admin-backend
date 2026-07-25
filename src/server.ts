@@ -12,12 +12,12 @@ async function start(): Promise<void> {
       'Database connection established'
     );
     const server = createServer(createApp());
-    server.listen(env.PORT, () =>
+    server.listen(env.PORT, () => {
       logger.info(
         { url: 'http://localhost:' + env.PORT, environment: env.NODE_ENV },
         'API server started; watching for saved file changes'
-      )
-    );
+      );
+    });
 
     let shuttingDown = false;
     const shutdown = (signal: string) => {

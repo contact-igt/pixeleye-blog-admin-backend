@@ -1,6 +1,4 @@
 import type { CorsOptions } from 'cors';
-import { env } from './environment.js';
-import { ApiError } from '../utils/api-error.js';
 
 export const corsOptions: CorsOptions = {
   credentials: true,

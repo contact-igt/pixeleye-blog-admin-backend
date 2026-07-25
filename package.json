@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/index-newsletter-worker.ts",
     "start": "node dist/server.js",
+    "newsletter:worker": "node dist/index-newsletter-worker.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint .",
@@ -30,6 +32,7 @@
     "@types/sanitize-html": "^2.16.1",
     "compression": "latest",
     "cors": "latest",
+    "cron": "^4.4.0",
     "dotenv": "latest",
     "express": "latest",
     "express-rate-limit": "latest",

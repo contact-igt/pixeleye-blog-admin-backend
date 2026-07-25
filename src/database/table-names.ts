@@ -6,6 +6,10 @@ export const tableNames = {
   AUDIT_LOGS: 'audit_logs',
   BLOGS: 'blogs',
   BLOG_VERSIONS: 'blog_versions',
+  BLOG_FEEDBACK: 'blog_feedback',
+  NEWSLETTER_SUBSCRIBERS: 'newsletter_subscribers',
+  NEWSLETTER_CAMPAIGNS: 'newsletter_campaigns',
+  NEWSLETTER_DELIVERIES: 'newsletter_deliveries',
   CUSTOM_TEMPLATES: 'custom_templates',
   CUSTOM_TEMPLATE_VERSIONS: 'custom_template_versions'
 } as const;

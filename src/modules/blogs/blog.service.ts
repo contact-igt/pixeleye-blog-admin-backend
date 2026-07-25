@@ -166,6 +166,7 @@ async function buildMediaMapForBlogs(blogs: any[], transaction?: Transaction): P
       try {
         const blocks = normalizeBlogBlocks(data.blocksJson ?? data.blocks_json);
         mediaIds.push(...collectBlogBlockMediaIds(blocks));
+        // eslint-disable-next-line no-empty
       } catch {}
     }
     if (data?.currentDraftVersion || data?.current_draft_version) collectFromObj(data.currentDraftVersion ?? data.current_draft_version);

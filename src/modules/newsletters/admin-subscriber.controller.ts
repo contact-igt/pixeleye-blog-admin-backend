@@ -1,0 +1,677 @@
+import type { NextFunction, Request, Response } from 'express';
+import { sendSuccess } from '../../utils/api-response.js';
+import { ApiError } from '../../utils/api-error.js';
+import { NewsletterSubscriber } from './newsletter-subscriber.model.js';
+import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
+import { generateToken, hashToken, normalizeEmail } from './newsletter-subscription.service.js';
+import { createMailTransporter, isMailConfigured } from '../../services/integrations/mail.service.js';
+import { generateVerificationEmail } from './email-templates.js';
+import { logger } from '../../config/logger.js';
+import { sequelize } from '../../config/database.js';
+import { z } from 'zod';
+import { Op } from 'sequelize';
+
+const listQuerySchema = z.object({
+  page: z.coerce.number().int().positive().default(1),
+  limit: z.coerce.number().int().positive().max(100).default(20),
+  search: z.string().optional(),
+  status: z.enum(['pending', 'subscribed', 'unsubscribed']).optional(),
+  source: z.string().optional(),
+  sort: z.enum(['email', 'status', 'created_at', 'verified_at']).default('created_at'),
+  order: z.enum(['asc', 'desc']).default('desc')
+}).strict();
+
+const createSubscriberSchema = z.object({
+  email: z.string().email('Invalid email format'),
+  source: z.string().max(100).default('admin_manual'),
+  consent_note: z.string().max(500).optional()
+}).strict();
+
+const NEWSLETTER_VERIFICATION_TTL_HOURS = parseInt(process.env.NEWSLETTER_VERIFICATION_TOKEN_TTL_HOURS || '24', 10);
+const NEWSLETTER_RESEND_COOLDOWN_MINUTES = parseInt(process.env.NEWSLETTER_VERIFICATION_RESEND_COOLDOWN_MINUTES || '5', 10);
+const PUBLIC_WEBSITE_URL = process.env.PUBLIC_WEBSITE_URL || 'https://pixeleye.in';
+
+function serializeSubscriber(subscriber: any) {
+  const data = typeof subscriber.get === 'function' ? subscriber.get({ plain: true }) : subscriber;
+  return {
+    id: String(data.id),
+    email: data.email,
+    status: data.status,
+    source: data.source || null,
+    consent_text: data.consentText || null,
+    consent_version: data.consentVersion || null,
+    consent_at: data.consentAt ? new Date(data.consentAt).toISOString() : null,
+    verification_sent_at: data.verificationSentAt ? new Date(data.verificationSentAt).toISOString() : null,
+    verified_at: data.verifiedAt ? new Date(data.verifiedAt).toISOString() : null,
+    unsubscribed_at: data.unsubscribedAt ? new Date(data.unsubscribedAt).toISOString() : null,
+    created_at: new Date(data.createdAt).toISOString(),
+    updated_at: new Date(data.updatedAt).toISOString()
+  };
+}
+
+async function sendVerificationEmailToSubscriber(subscriber: any, verificationToken: string): Promise<void> {
+  if (!isMailConfigured()) {
+    logger.warn('SMTP not configured, cannot send verification email');
+    throw new ApiError(503, 'Email service is temporarily unavailable');
+  }
+
+  const email = subscriber.get('email');
+  const verificationUrl = `${PUBLIC_WEBSITE_URL}/newsletter/verify?token=${encodeURIComponent(verificationToken)}`;
+  const emailTemplate = generateVerificationEmail(verificationUrl, email);
+
+  const transporter = createMailTransporter();
+
+  try {
+    const fromAddress = process.env.MAIL_FROM_NAME && process.env.MAIL_FROM_NAME !== 'Pixel Eye Hospitals'
+      ? `${process.env.MAIL_FROM_NAME} <${process.env.MAIL_FROM_EMAIL}>`
+      : `Pixel Eye Blog <${process.env.MAIL_FROM_EMAIL}>`;
+
+    const result = await transporter.sendMail({
+      from: fromAddress,
+      to: email,
+      subject: emailTemplate.subject,
+      html: emailTemplate.htmlBody,
+      text: emailTemplate.textBody
+    });
+
+    logger.info({ messageId: result.messageId, email }, 'Verification email sent');
+  } catch (error) {
+    logger.error(
+      { error: error instanceof Error ? error.message : String(error), email },
+      'Failed to send verification email'
+    );
+    throw new ApiError(503, 'Failed to send verification email');
+  }
+}
+
+export function createAdminSubscriberController() {
+  return {
+    async list(request: Request, response: Response, next: NextFunction) {
+      try {
+        const query = listQuerySchema.parse(request.query);
+
+        const where: any = {};
+        if (query.search) {
+          where.email = {
+            [Op.like]: `%${query.search.replace(/[%_\\]/g, '\\$&')}%`
+          };
+        }
+        if (query.status) {
+          where.status = query.status;
+        }
+        if (query.source) {
+          where.source = query.source;
+        }
+
+        const sortField =
+          query.sort === 'email'
+            ? 'email'
+            : query.sort === 'status'
+              ? 'status'
+              : query.sort === 'verified_at'
+                ? 'verifiedAt'
+                : 'createdAt';
+
+        const result = await NewsletterSubscriber.findAndCountAll({
+          where,
+          attributes: [
+            'id',
+            'email',
+            'status',
+            'source',
+            'consentText',
+            'consentVersion',
+            'consentAt',
+            'verificationSentAt',
+            'verifiedAt',
+            'unsubscribedAt',
+            'createdAt',
+            'updatedAt'
+          ],
+          limit: query.limit,
+          offset: (query.page - 1) * query.limit,
+          order: [[sortField, query.order.toUpperCase()]],
+          subQuery: false
+        });
+
+        const totalPages = Math.ceil(result.count / query.limit);
+
+        return sendSuccess(response, 'Subscribers fetched', {
+          items: result.rows.map((sub) => serializeSubscriber(sub)),
+          pagination: {
+            page: query.page,
+            limit: query.limit,
+            total_items: result.count,
+            total_pages: totalPages,
+            has_next_page: query.page < totalPages,
+            has_previous_page: query.page > 1
+          }
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async stats(request: Request, response: Response, next: NextFunction) {
+      try {
+        const total = await NewsletterSubscriber.count();
+        const subscribed = await NewsletterSubscriber.count({ where: { status: 'subscribed' } });
+        const pending = await NewsletterSubscriber.count({ where: { status: 'pending' } });
+        const unsubscribed = await NewsletterSubscriber.count({ where: { status: 'unsubscribed' } });
+
+        return sendSuccess(response, 'Subscriber stats fetched', {
+          total_subscribers: total,
+          subscribed,
+          pending,
+          unsubscribed
+        });
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async getDetail(request: Request, response: Response, next: NextFunction) {
+      try {
+        const subscriberId = String(request.params.id ?? '').trim();
+        if (!subscriberId || !/^\d+$/.test(subscriberId)) {
+          throw new ApiError(400, 'Invalid subscriber ID');
+        }
+
+        const subscriber = await NewsletterSubscriber.findByPk(subscriberId, {
+          attributes: [
+            'id',
+            'email',
+            'status',
+            'source',
+            'consentText',
+            'consentVersion',
+            'consentAt',
+            'verificationSentAt',
+            'verifiedAt',
+            'unsubscribedAt',
+            'createdAt',
+            'updatedAt'
+          ]
+        });
+
+        if (!subscriber) {
+          throw new ApiError(404, 'Subscriber not found');
+        }
+
+        return sendSuccess(response, 'Subscriber fetched', serializeSubscriber(subscriber));
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async exportCsv(request: Request, response: Response, next: NextFunction) {
+      try {
+        const query = listQuerySchema.parse(request.query);
+        const actor = (request as any).user;
+
+        const where: any = {};
+        if (query.search) {
+          where.email = {
+            [Op.like]: `%${query.search.replace(/[%_\\]/g, '\\$&')}%`
+          };
+        }
+        if (query.status) {
+          where.status = query.status;
+        }
+        if (query.source) {
+          where.source = query.source;
+        }
+
+        const subscribers = await NewsletterSubscriber.findAll({
+          where,
+          attributes: [
+            'email',
+            'status',
+            'source',
+            'consentVersion',
+            'consentAt',
+            'verificationSentAt',
+            'verifiedAt',
+            'unsubscribedAt',
+            'createdAt'
+          ],
+          order: [['createdAt', 'DESC']],
+          raw: true
+        });
+
+        await writeAuthAuditLog({
+          action: 'SUBSCRIBER_CSV_EXPORTED',
+          adminUserId: actor.id,
+          metadata: { subscriber_count: subscribers.length, filters: { search: query.search || null, status: query.status || null, source: query.source || null } }
+        });
+
+        // Generate CSV
+        const headers = [
+          'Email',
+          'Status',
+          'Source',
+          'Consent Version',
+          'Consent Date',
+          'Verification Sent',
+          'Verified Date',
+          'Unsubscribed Date',
+          'Created Date'
+        ];
+
+        const rows = subscribers.map((sub: any) => [
+          escapeCsvField(sub.email as string),
+          sub.status,
+          sub.source || '',
+          sub.consentVersion || '',
+          sub.consentAt ? new Date(sub.consentAt).toISOString() : '',
+          sub.verificationSentAt ? new Date(sub.verificationSentAt).toISOString() : '',
+          sub.verifiedAt ? new Date(sub.verifiedAt).toISOString() : '',
+          sub.unsubscribedAt ? new Date(sub.unsubscribedAt).toISOString() : '',
+          new Date(sub.createdAt).toISOString()
+        ]);
+
+        const csv = [headers, ...rows].map((row) => row.join(',')).join('\n');
+
+        response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        response.setHeader(
+          'Content-Disposition',
+          `attachment; filename="subscribers_${new Date().toISOString().split('T')[0]}.csv"`
+        );
+        response.send(csv);
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async create(request: Request, response: Response, next: NextFunction) {
+      try {
+        const actor = (request as any).authenticatedAdmin;
+        if (!actor) {
+          throw new ApiError(401, 'Authentication is required');
+        }
+
+        const payload = createSubscriberSchema.parse(request.body);
+        const email = payload.email.trim();
+        const normalEmail = normalizeEmail(email);
+
+        let subscriber: any;
+        let verificationToken: string = '';
+        let wasNew = false;
+
+        // TRANSACTION: Save subscriber record only
+        await sequelize.transaction(async (transaction) => {
+          const existingSubscriber = await NewsletterSubscriber.findOne({
+            where: { normalizedEmail: normalEmail },
+            transaction
+          });
+
+          if (existingSubscriber) {
+            const subscriberData = existingSubscriber.get({ plain: true }) as any;
+
+            if (subscriberData.status === 'subscribed') {
+              throw new ApiError(409, 'This email is already subscribed.');
+            }
+
+            if (subscriberData.status === 'pending') {
+              const lastSent = subscriberData.lastVerificationSentAt;
+              if (lastSent) {
+                const minutesSinceLastSent = (Date.now() - new Date(lastSent).getTime()) / (1000 * 60);
+                if (minutesSinceLastSent < NEWSLETTER_RESEND_COOLDOWN_MINUTES) {
+                  throw new ApiError(429, `Please wait ${Math.ceil(NEWSLETTER_RESEND_COOLDOWN_MINUTES - minutesSinceLastSent)} minutes before resending.`);
+                }
+              }
+
+              verificationToken = generateToken();
+              const verificationTokenHash = hashToken(verificationToken);
+              const expiresAt = new Date(Date.now() + NEWSLETTER_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
+
+              await existingSubscriber.update({
+                verificationTokenHash,
+                verificationExpiresAt: expiresAt,
+                lastVerificationSentAt: new Date(),
+                source: payload.source
+              }, { transaction });
+
+              subscriber = existingSubscriber;
+            } else if (subscriberData.status === 'unsubscribed') {
+              verificationToken = generateToken();
+              const verificationTokenHash = hashToken(verificationToken);
+              const unsubscribeToken = generateToken();
+              const unsubscribeTokenHash = hashToken(unsubscribeToken);
+              const expiresAt = new Date(Date.now() + NEWSLETTER_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
+
+              await existingSubscriber.update({
+                status: 'pending',
+                verificationTokenHash,
+                verificationExpiresAt: expiresAt,
+                unsubscribeTokenHash,
+                unsubscribedAt: null,
+                consentVersion: 'v1',
+                consentAt: new Date(),
+                lastVerificationSentAt: new Date(),
+                source: payload.source
+              }, { transaction });
+
+              subscriber = existingSubscriber;
+            }
+          } else {
+            // Create new subscriber
+            verificationToken = generateToken();
+            const verificationTokenHash = hashToken(verificationToken);
+            const unsubscribeToken = generateToken();
+            const unsubscribeTokenHash = hashToken(unsubscribeToken);
+            const expiresAt = new Date(Date.now() + NEWSLETTER_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
+
+            subscriber = await NewsletterSubscriber.create({
+              email,
+              normalizedEmail: normalEmail,
+              status: 'pending',
+              verificationTokenHash,
+              verificationExpiresAt: expiresAt,
+              unsubscribeTokenHash,
+              source: payload.source,
+              consentVersion: 'v1',
+              consentAt: new Date(),
+              lastVerificationSentAt: new Date()
+            }, { transaction });
+
+            wasNew = true;
+          }
+        });
+
+        // Send email AFTER transaction commits (outside transaction)
+        try {
+          await sendVerificationEmailToSubscriber(subscriber, verificationToken);
+
+          // Update verification_sent_at only after email succeeds
+          await subscriber.update({
+            verificationSentAt: new Date()
+          });
+
+          await writeAuthAuditLog({
+            action: 'NEWSLETTER_SUBSCRIBER_CREATED',
+            adminUserId: actor.id,
+            metadata: {
+              subscriber_id: String(subscriber.id),
+              email: email,
+              status: 'pending',
+              source: payload.source,
+              consent_note: payload.consent_note || null,
+              was_new: wasNew,
+              email_sent: true
+            }
+          });
+
+          return sendSuccess(response, 'Verification email sent', serializeSubscriber(subscriber), 201);
+        } catch (emailError) {
+          logger.warn({ subscriberId: subscriber.id, email }, 'Email send failed, but subscriber was saved');
+
+          await writeAuthAuditLog({
+            action: 'NEWSLETTER_SUBSCRIBER_CREATED',
+            adminUserId: actor.id,
+            metadata: {
+              subscriber_id: String(subscriber.id),
+              email: email,
+              status: 'pending',
+              source: payload.source,
+              consent_note: payload.consent_note || null,
+              was_new: wasNew,
+              email_sent: false,
+              error: emailError instanceof Error ? emailError.message : String(emailError)
+            }
+          });
+
+          return sendSuccess(response, 'Subscriber saved, but verification email could not be sent. Use Resend Verification to retry.', serializeSubscriber(subscriber), 201);
+        }
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async resendVerification(request: Request, response: Response, next: NextFunction) {
+      try {
+        const actor = (request as any).authenticatedAdmin;
+        if (!actor) {
+          throw new ApiError(401, 'Authentication is required');
+        }
+
+        const subscriberId = String(request.params.id ?? '').trim();
+        if (!subscriberId || !/^\d+$/.test(subscriberId)) {
+          throw new ApiError(400, 'Invalid subscriber ID');
+        }
+
+        let subscriber: any;
+        let verificationToken: string = '';
+
+        // TRANSACTION: Update subscriber token only
+        await sequelize.transaction(async (transaction) => {
+          subscriber = await NewsletterSubscriber.findByPk(subscriberId, {
+            transaction
+          });
+
+          if (!subscriber) {
+            throw new ApiError(404, 'Subscriber not found');
+          }
+
+          const subscriberData = subscriber.get({ plain: true }) as any;
+
+          if (subscriberData.status !== 'pending') {
+            throw new ApiError(400, 'Only pending subscribers can receive verification emails');
+          }
+
+          const lastSent = subscriberData.lastVerificationSentAt;
+          if (lastSent) {
+            const minutesSinceLastSent = (Date.now() - new Date(lastSent).getTime()) / (1000 * 60);
+            if (minutesSinceLastSent < NEWSLETTER_RESEND_COOLDOWN_MINUTES) {
+              throw new ApiError(429, `Please wait ${Math.ceil(NEWSLETTER_RESEND_COOLDOWN_MINUTES - minutesSinceLastSent)} minutes before resending.`);
+            }
+          }
+
+          verificationToken = generateToken();
+          const verificationTokenHash = hashToken(verificationToken);
+          const expiresAt = new Date(Date.now() + NEWSLETTER_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
+
+          await subscriber.update({
+            verificationTokenHash,
+            verificationExpiresAt: expiresAt,
+            lastVerificationSentAt: new Date()
+          }, { transaction });
+        });
+
+        // Send email AFTER transaction commits (outside transaction)
+        try {
+          await sendVerificationEmailToSubscriber(subscriber, verificationToken);
+
+          // Update verification_sent_at only after email succeeds
+          await subscriber.update({
+            verificationSentAt: new Date()
+          });
+
+          await writeAuthAuditLog({
+            action: 'NEWSLETTER_SUBSCRIBER_VERIFICATION_RESENT',
+            adminUserId: actor.id,
+            metadata: {
+              subscriber_id: subscriberId,
+              email: subscriber.get('email'),
+              email_sent: true
+            }
+          });
+
+          return sendSuccess(response, 'Verification email resent', serializeSubscriber(subscriber));
+        } catch (emailError) {
+          logger.warn({ subscriberId, email: subscriber.get('email') }, 'Resend email send failed, but token was updated');
+
+          await writeAuthAuditLog({
+            action: 'NEWSLETTER_SUBSCRIBER_VERIFICATION_RESENT',
+            adminUserId: actor.id,
+            metadata: {
+              subscriber_id: subscriberId,
+              email: subscriber.get('email'),
+              email_sent: false,
+              error: emailError instanceof Error ? emailError.message : String(emailError)
+            }
+          });
+
+          return sendSuccess(response, 'Token updated, but verification email could not be sent. Try again after a moment.', serializeSubscriber(subscriber));
+        }
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async delete(request: Request, response: Response, next: NextFunction) {
+      try {
+        const actor = (request as any).authenticatedAdmin;
+        if (!actor) {
+          throw new ApiError(401, 'Authentication is required');
+        }
+
+        const subscriberId = String(request.params.id ?? '').trim();
+        if (!subscriberId || !/^\d+$/.test(subscriberId)) {
+          throw new ApiError(400, 'Invalid subscriber ID');
+        }
+
+        const reason = (request.body?.reason || 'admin_deletion').substring(0, 255);
+
+        const result = await sequelize.transaction(async (transaction) => {
+          const subscriber = await NewsletterSubscriber.findByPk(subscriberId, {
+            transaction
+          });
+
+          if (!subscriber) {
+            throw new ApiError(404, 'Subscriber not found');
+          }
+
+          const deliveryCount = await sequelize.models.NewsletterDelivery?.count({
+            where: { subscriberId },
+            transaction
+          }) ?? 0;
+
+          if (deliveryCount === 0) {
+            await subscriber.destroy({ transaction });
+
+            await writeAuthAuditLog({
+              action: 'NEWSLETTER_SUBSCRIBER_DELETED',
+              adminUserId: actor.id,
+              metadata: {
+                subscriber_id: subscriberId,
+                email: subscriber.get('email'),
+                deletion_mode: 'hard_delete',
+                deletion_reason: reason
+              }
+            }, transaction);
+
+            return { success: true, deletion_mode: 'hard_delete' };
+          }
+
+          const anonymizedEmail = `deleted-subscriber-${subscriberId}@invalid.local`;
+          const anonymizedNormalEmail = normalizeEmail(anonymizedEmail);
+
+          await subscriber.update({
+            email: anonymizedEmail,
+            normalizedEmail: anonymizedNormalEmail,
+            status: 'unsubscribed',
+            verificationTokenHash: null,
+            verificationExpiresAt: null,
+            unsubscribeTokenHash: null,
+            deletedAt: new Date(),
+            deletedBy: actor.id,
+            deletionReason: reason,
+            anonymizedAt: new Date()
+          }, { transaction });
+
+          await writeAuthAuditLog({
+            action: 'NEWSLETTER_SUBSCRIBER_ANONYMIZED',
+            adminUserId: actor.id,
+            metadata: {
+              subscriber_id: subscriberId,
+              email: subscriber.get('email'),
+              deletion_mode: 'anonymized',
+              deletion_reason: reason,
+              delivery_history_count: deliveryCount
+            }
+          }, transaction);
+
+          return { success: true, deletion_mode: 'anonymized' };
+        });
+
+        return sendSuccess(response, 'Subscriber deleted', result);
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async testSmtpEmail(request: Request, response: Response, next: NextFunction) {
+      try {
+        const actor = (request as any).authenticatedAdmin;
+        if (!actor) {
+          throw new ApiError(401, 'Authentication is required');
+        }
+
+        const payload = z.object({ email: z.string().email() }).parse(request.body);
+
+        if (!isMailConfigured()) {
+          throw new ApiError(503, 'SMTP is not configured');
+        }
+
+        const transporter = createMailTransporter();
+        const emailTemplate = generateVerificationEmail('https://example.com/verify?token=TEST_TOKEN', payload.email);
+
+        try {
+          const fromAddress = process.env.MAIL_FROM_NAME && process.env.MAIL_FROM_NAME !== 'Pixel Eye Hospitals'
+            ? `${process.env.MAIL_FROM_NAME} <${process.env.MAIL_FROM_EMAIL}>`
+            : `Pixel Eye Blog <${process.env.MAIL_FROM_EMAIL}>`;
+
+          const result = await transporter.sendMail({
+            from: fromAddress,
+            to: payload.email,
+            subject: `[TEST] ${emailTemplate.subject}`,
+            html: `<p>This is a test email to verify SMTP configuration.</p><p>Timestamp: ${new Date().toISOString()}</p><hr>${emailTemplate.htmlBody}`,
+            text: `This is a test email to verify SMTP configuration.\n\nTimestamp: ${new Date().toISOString()}\n\n${emailTemplate.textBody}`
+          });
+
+          logger.info({ messageId: result.messageId, testEmail: payload.email }, 'SMTP test email sent');
+
+          await writeAuthAuditLog({
+            action: 'NEWSLETTER_SUBSCRIBER_CREATED',
+            adminUserId: actor.id,
+            metadata: {
+              action_type: 'smtp_test_email',
+              test_email: payload.email,
+              message_id: result.messageId
+            }
+          });
+
+          return sendSuccess(response, 'Test email sent successfully', {
+            message_id: result.messageId,
+            recipient: payload.email,
+            sent_at: new Date().toISOString()
+          });
+        } catch (smtpError) {
+          logger.error(
+            { error: smtpError instanceof Error ? smtpError.message : String(smtpError), email: payload.email },
+            'SMTP test email failed'
+          );
+          throw new ApiError(503, 'Failed to send test email. Check SMTP configuration.');
+        }
+      } catch (error) {
+        next(error);
+      }
+    }
+  };
+}
+
+function escapeCsvField(field: string | undefined | null): string {
+  const safeField = field || '';
+  if (!safeField) return '';
+  // Escape spreadsheet formula prefixes
+  const firstChar = safeField[0];
+  if (firstChar && ['+', '-', '=', '@'].includes(firstChar)) {
+    return `"'${safeField}"`;
+  }
+  // Quote if contains comma, newline, or quotes
+  if (safeField.includes(',') || safeField.includes('\n') || safeField.includes('"')) {
+    return `"${safeField.replace(/"/g, '""')}"`;
+  }
+  return safeField;
+}

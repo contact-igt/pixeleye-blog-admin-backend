@@ -1,11 +1,12 @@
 import type { Sequelize } from 'sequelize';
 import { sequelize as defaultSequelize } from '../../config/database.js';
-import { initializeAuthModels, initializeBlogModels, initializeCustomTemplateModels, initializeMediaModels } from '../models/index.js';
+import { initializeAuthModels, initializeBlogModels, initializeCustomTemplateModels, initializeMediaModels, initializeNewsletterModels } from '../models/index.js';
 
 const authAssociationsBySequelize = new WeakSet<Sequelize>();
 const mediaAssociationsBySequelize = new WeakSet<Sequelize>();
 const blogAssociationsBySequelize = new WeakSet<Sequelize>();
 const customTemplateAssociationsBySequelize = new WeakSet<Sequelize>();
+const newsletterAssociationsBySequelize = new WeakSet<Sequelize>();
 
 export function initializeAuthAssociations(sequelize: Sequelize = defaultSequelize) {
   if (authAssociationsBySequelize.has(sequelize)) {
@@ -103,7 +104,7 @@ export function initializeBlogAssociations(sequelize: Sequelize = defaultSequeli
 
   const { AdminUser } = initializeAuthModels(sequelize);
   const { MediaAsset } = initializeMediaModels(sequelize);
-  const { Blog, BlogVersion } = initializeBlogModels(sequelize);
+  const { Blog, BlogVersion, BlogFeedback } = initializeBlogModels(sequelize);
 
   Blog.belongsTo(AdminUser, { foreignKey: 'authorId', as: 'author', constraints: false });
   Blog.belongsTo(AdminUser, { foreignKey: 'createdBy', as: 'creator', constraints: false });
@@ -114,12 +115,16 @@ export function initializeBlogAssociations(sequelize: Sequelize = defaultSequeli
   Blog.hasMany(BlogVersion, { foreignKey: 'blogId', as: 'versions', constraints: false });
   Blog.belongsTo(BlogVersion, { foreignKey: 'currentDraftVersionId', as: 'currentDraftVersion', constraints: false });
   Blog.belongsTo(BlogVersion, { foreignKey: 'currentPublishedVersionId', as: 'currentPublishedVersion', constraints: false });
+  Blog.hasMany(BlogFeedback, { foreignKey: 'blogId', as: 'feedback', constraints: false });
   BlogVersion.belongsTo(Blog, { foreignKey: 'blogId', as: 'blog', constraints: false });
   BlogVersion.belongsTo(AdminUser, { foreignKey: 'createdBy', as: 'creator', constraints: false });
   BlogVersion.belongsTo(MediaAsset, { foreignKey: 'featuredMediaId', as: 'featuredMedia', constraints: false });
+  BlogVersion.hasMany(BlogFeedback, { foreignKey: 'blogVersionId', as: 'feedback', constraints: false });
+  BlogFeedback.belongsTo(Blog, { foreignKey: 'blogId', as: 'blog', constraints: false });
+  BlogFeedback.belongsTo(BlogVersion, { foreignKey: 'blogVersionId', as: 'blogVersion', constraints: false });
 
   blogAssociationsBySequelize.add(sequelize);
-  return { AdminUser, MediaAsset, Blog, BlogVersion };
+  return { AdminUser, MediaAsset, Blog, BlogVersion, BlogFeedback };
 }
 
 export function initializeCustomTemplateAssociations(sequelize: Sequelize = defaultSequelize) {
@@ -152,4 +157,27 @@ export function initializeCustomTemplateAssociations(sequelize: Sequelize = defa
 
   customTemplateAssociationsBySequelize.add(sequelize);
   return { AdminUser, BlogVersion, CustomTemplate, CustomTemplateVersion };
+}
+
+export function initializeNewsletterAssociations(sequelize: Sequelize = defaultSequelize) {
+  if (newsletterAssociationsBySequelize.has(sequelize)) {
+    return { ...initializeNewsletterModels(sequelize), ...initializeBlogModels(sequelize), ...initializeAuthModels(sequelize) };
+  }
+
+  const { NewsletterSubscriber, NewsletterCampaign, NewsletterDelivery } = initializeNewsletterModels(sequelize);
+  const { Blog, BlogVersion } = initializeBlogModels(sequelize);
+  const { AdminUser } = initializeAuthModels(sequelize);
+
+  NewsletterCampaign.belongsTo(Blog, { foreignKey: 'blogId', as: 'blog', constraints: false });
+  NewsletterCampaign.belongsTo(BlogVersion, { foreignKey: 'blogVersionId', as: 'blogVersion', constraints: false });
+  NewsletterCampaign.belongsTo(AdminUser, { foreignKey: 'createdBy', as: 'creator', constraints: false });
+  NewsletterCampaign.hasMany(NewsletterDelivery, { foreignKey: 'campaignId', as: 'deliveries', constraints: false });
+
+  NewsletterDelivery.belongsTo(NewsletterCampaign, { foreignKey: 'campaignId', as: 'campaign', constraints: false });
+  NewsletterDelivery.belongsTo(NewsletterSubscriber, { foreignKey: 'subscriberId', as: 'subscriber', constraints: false });
+
+  NewsletterSubscriber.hasMany(NewsletterDelivery, { foreignKey: 'subscriberId', as: 'deliveries', constraints: false });
+
+  newsletterAssociationsBySequelize.add(sequelize);
+  return { NewsletterSubscriber, NewsletterCampaign, NewsletterDelivery, Blog, BlogVersion, AdminUser };
 }
