@@ -1,4 +1,4 @@
-﻿import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { Transaction } from 'sequelize';
 import { AuditLog } from '../../auth/index.js';
 
@@ -11,6 +11,7 @@ export const authAuditActions = [
   'AUTH_PASSWORD_CHANGED',
   'AUTH_ACCOUNT_LOCKED',
   'MEDIA_ASSET_UPLOADED',
+  'MEDIA_ASSET_UPDATED',
   'MEDIA_MOVED_TO_TRASH',
   'MEDIA_RESTORED',
   'MEDIA_PERMANENT_DELETE_STARTED',

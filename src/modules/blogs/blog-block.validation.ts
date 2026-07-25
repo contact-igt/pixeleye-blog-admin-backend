@@ -64,6 +64,24 @@ function stripHydratedMedia(data: any): any {
       });
     }
   }
+  if (clone.custom_instances && typeof clone.custom_instances === 'object') {
+    for (const instance of Object.values(clone.custom_instances)) {
+      if (!instance || typeof instance !== 'object') continue;
+      const inst = instance as any;
+      delete inst.url;
+      delete inst.original_url;
+      delete inst.media;
+      if (Array.isArray(inst.items)) {
+        inst.items.forEach((item: any) => {
+          if (item && typeof item === 'object') {
+            delete item.url;
+            delete item.original_url;
+            delete item.media;
+          }
+        });
+      }
+    }
+  }
   return clone;
 }
 
@@ -81,8 +99,25 @@ export function normalizeBlogBlocks(value: unknown): BlogBlocksDocument {
   return validateBlogBlocks(stripHydratedMedia(parsed));
 }
 export function collectBlogBlockMediaIds(document: BlogBlocksDocument): string[] {
-  const ids = document.blocks.image_comparison.items.map((item) => item.media_id).concat(document.blocks.expert_quote.media_id).filter((id): id is string => Boolean(id));
-  return [...new Set(ids)];
+  const ids: Array<string | null | undefined> = [
+    ...document.blocks.image_comparison.items.map((item) => item.media_id),
+    document.blocks.expert_quote.media_id
+  ];
+
+  if (document.custom_instances && typeof document.custom_instances === 'object') {
+    for (const instance of Object.values(document.custom_instances)) {
+      if (!instance) continue;
+      const inst = instance as any;
+      if (inst.componentKey === 'expert_quote' && inst.media_id) {
+        ids.push(inst.media_id);
+      } else if (inst.componentKey === 'image_comparison' && Array.isArray(inst.items)) {
+        inst.items.forEach((item: any) => ids.push(item?.media_id));
+      }
+    }
+  }
+
+  const validIds = ids.filter((id): id is string => Boolean(id));
+  return [...new Set(validIds)];
 }
 function required(value: string): boolean { return Boolean(value.trim()); }
 function completeAction(action: { label: string; url: string }): boolean { return required(action.label) && required(action.url); }

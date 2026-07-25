@@ -65,8 +65,8 @@ function mediaSummary(media: any) {
 }
 
 function hydrateBlogBlocksMedia(blocksDoc: any, mediaMap?: Map<string | number, any>): any {
-  if (!blocksDoc || !blocksDoc.blocks) return blocksDoc;
-  const blocks = { ...blocksDoc.blocks };
+  if (!blocksDoc) return blocksDoc;
+  const blocks = blocksDoc.blocks ? { ...blocksDoc.blocks } : {};
   if (blocks.expert_quote) {
     const mediaId = blocks.expert_quote.media_id;
     const asset = mediaId ? (mediaMap?.get(String(mediaId)) ?? mediaMap?.get(Number(mediaId))) : null;
@@ -105,7 +105,54 @@ function hydrateBlogBlocksMedia(blocksDoc: any, mediaMap?: Map<string | number, 
       })
     };
   }
-  return { ...blocksDoc, blocks };
+
+  let custom_instances = blocksDoc.custom_instances;
+  if (custom_instances && typeof custom_instances === 'object') {
+    const updatedCustom: Record<string, any> = {};
+    for (const [key, instance] of Object.entries(custom_instances)) {
+      if (!instance || typeof instance !== 'object') {
+        updatedCustom[key] = instance;
+        continue;
+      }
+      const inst = { ...(instance as any) };
+      if (inst.componentKey === 'expert_quote' || inst.media_id !== undefined) {
+        const mediaId = inst.media_id;
+        const asset = mediaId ? (mediaMap?.get(String(mediaId)) ?? mediaMap?.get(Number(mediaId))) : null;
+        const summary = mediaSummary(asset);
+        let url = summary?.original_url ?? asset?.originalUrl ?? asset?.original_url ?? asset?.url ?? null;
+        if (!url && typeof mediaId === 'string' && (mediaId.startsWith('http://') || mediaId.startsWith('https://') || mediaId.startsWith('/'))) {
+          url = mediaId;
+        }
+        if (!url && inst.profile_url) {
+          url = inst.profile_url;
+        }
+        inst.url = url;
+        inst.original_url = url;
+        inst.media = summary;
+      }
+      if (inst.componentKey === 'image_comparison' && Array.isArray(inst.items)) {
+        inst.items = inst.items.map((item: any) => {
+          const mediaId = item.media_id;
+          const asset = mediaId ? (mediaMap?.get(String(mediaId)) ?? mediaMap?.get(Number(mediaId))) : null;
+          const summary = mediaSummary(asset);
+          let url = summary?.original_url ?? asset?.originalUrl ?? asset?.original_url ?? asset?.url ?? null;
+          if (!url && typeof mediaId === 'string' && (mediaId.startsWith('http://') || mediaId.startsWith('https://') || mediaId.startsWith('/'))) {
+            url = mediaId;
+          }
+          return {
+            ...item,
+            url,
+            original_url: url,
+            media: summary
+          };
+        });
+      }
+      updatedCustom[key] = inst;
+    }
+    custom_instances = updatedCustom;
+  }
+
+  return { ...blocksDoc, blocks, custom_instances };
 }
 
 async function buildMediaMapForBlogs(blogs: any[], transaction?: Transaction): Promise<Map<string | number, any>> {
