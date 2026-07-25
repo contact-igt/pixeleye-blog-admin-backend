@@ -6,7 +6,7 @@ import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
 import { MediaAsset } from '../media/media.model.js';
 import { Blog, type BlogStatus } from './blog.model.js';
 import { BlogVersion } from './blog-version.model.js';
-import { blogBlockCompletionErrors, isEnabledBlogBlockComplete, normalizeBlogBlocks } from './blog-block.validation.js';
+import { blogBlockCompletionErrors, collectBlogBlockMediaIds, isEnabledBlogBlockComplete, normalizeBlogBlocks } from './blog-block.validation.js';
 import type { BlogBlocksDocument } from './blog-block.types.js';
 import {
   isValidTemplateSnapshot,
@@ -39,12 +39,126 @@ const trashSortColumns: Record<string, string> = { created_at: 'createdAt', upda
 
 function plain(model: any) { return typeof model?.get === 'function' ? model.get({ plain: true }) : model; }
 function safeAdmin(admin: any) { const data = plain(admin); return data ? { id: String(data.id), name: data.name, email: data.email, role: data.role } : null; }
-function mediaSummary(media: any) { const data = plain(media); return data ? { id: String(data.id), original_file_name: data.originalFileName ?? data.original_file_name, original_url: data.originalUrl ?? data.original_url, variants: data.variantsJson ?? data.variants_json ?? {}, alt_text: data.altText ?? data.alt_text ?? null, status: data.status } : null; }
+function mediaSummary(media: any) {
+  const data = plain(media);
+  if (!data) return null;
+  const originalUrl = data.originalUrl ?? data.original_url ?? data.url ?? null;
+  const variants = data.variantsJson ?? data.variants_json ?? {};
+  let resolvedUrl = originalUrl;
+  if (!resolvedUrl && variants && typeof variants === 'object') {
+    const firstVariant = Object.values(variants)[0] as any;
+    resolvedUrl = firstVariant?.url ?? null;
+  }
+  return {
+    id: String(data.id),
+    original_file_name: data.originalFileName ?? data.original_file_name ?? data.originalFilename ?? null,
+    original_url: resolvedUrl,
+    variants: variants ?? {},
+    alt_text: data.altText ?? data.alt_text ?? null,
+    status: data.status
+  };
+}
 
-function versionSummary(version: any, includeContent = true) {
+function hydrateBlogBlocksMedia(blocksDoc: any, mediaMap?: Map<string | number, any>): any {
+  if (!blocksDoc || !blocksDoc.blocks) return blocksDoc;
+  const blocks = { ...blocksDoc.blocks };
+  if (blocks.expert_quote) {
+    const mediaId = blocks.expert_quote.media_id;
+    const asset = mediaId ? (mediaMap?.get(String(mediaId)) ?? mediaMap?.get(Number(mediaId))) : null;
+    const summary = mediaSummary(asset);
+    let url = summary?.original_url ?? asset?.originalUrl ?? asset?.original_url ?? asset?.url ?? null;
+    if (!url && typeof mediaId === 'string' && (mediaId.startsWith('http://') || mediaId.startsWith('https://') || mediaId.startsWith('/'))) {
+      url = mediaId;
+    }
+    if (!url && blocks.expert_quote.profile_url) {
+      url = blocks.expert_quote.profile_url;
+    }
+    blocks.expert_quote = {
+      ...blocks.expert_quote,
+      url,
+      original_url: url,
+      media: summary
+    };
+  }
+  if (blocks.image_comparison && Array.isArray(blocks.image_comparison.items)) {
+    blocks.image_comparison = {
+      ...blocks.image_comparison,
+      items: blocks.image_comparison.items.map((item: any) => {
+        const mediaId = item.media_id;
+        const asset = mediaId ? (mediaMap?.get(String(mediaId)) ?? mediaMap?.get(Number(mediaId))) : null;
+        const summary = mediaSummary(asset);
+        let url = summary?.original_url ?? asset?.originalUrl ?? asset?.original_url ?? asset?.url ?? null;
+        if (!url && typeof mediaId === 'string' && (mediaId.startsWith('http://') || mediaId.startsWith('https://') || mediaId.startsWith('/'))) {
+          url = mediaId;
+        }
+        return {
+          ...item,
+          url,
+          original_url: url,
+          media: summary
+        };
+      })
+    };
+  }
+  return { ...blocksDoc, blocks };
+}
+
+async function buildMediaMapForBlogs(blogs: any[], transaction?: Transaction): Promise<Map<string | number, any>> {
+  const map = new Map<string | number, any>();
+  const mediaIds: Array<string | number> = [];
+
+  function collectFromObj(obj: any) {
+    if (!obj) return;
+    const data = plain(obj);
+    if (data?.blocksJson || data?.blocks_json) {
+      try {
+        const blocks = normalizeBlogBlocks(data.blocksJson ?? data.blocks_json);
+        mediaIds.push(...collectBlogBlockMediaIds(blocks));
+      } catch {}
+    }
+    if (data?.currentDraftVersion || data?.current_draft_version) collectFromObj(data.currentDraftVersion ?? data.current_draft_version);
+    if (data?.currentPublishedVersion || data?.current_published_version) collectFromObj(data.currentPublishedVersion ?? data.current_published_version);
+  }
+
+  for (const blogItem of blogs) {
+    collectFromObj(blogItem);
+  }
+
+  const rawUnique = [...new Set(mediaIds.filter(Boolean))];
+  if (rawUnique.length === 0) return map;
+  const uniqueIds = [...new Set(rawUnique.flatMap((id) => {
+    const str = String(id);
+    const num = Number(id);
+    return !isNaN(num) ? [str, num] : [str];
+  }))];
+
+  try {
+    const assets = await MediaAsset.findAll({
+      where: { id: { [Op.in]: uniqueIds } },
+      paranoid: false,
+      transaction
+    });
+    if (Array.isArray(assets)) {
+      for (const asset of assets) {
+        const plainAsset = plain(asset);
+        if (plainAsset && plainAsset.id !== undefined && plainAsset.id !== null) {
+          map.set(String(plainAsset.id), plainAsset);
+          map.set(Number(plainAsset.id), plainAsset);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('[buildMediaMapForBlogs error]:', error);
+  }
+  return map;
+}
+
+function versionSummary(version: any, includeContent = true, mediaMap?: Map<string | number, any>) {
   const data = plain(version);
   if (!data) return null;
   const snapshot = normalizeStoredTemplate(data);
+  const rawBlocks = normalizeBlogBlocks(data.blocksJson ?? data.blocks_json);
+  const hydratedBlocks = hydrateBlogBlocksMedia(rawBlocks, mediaMap);
   return {
     id: String(data.id),
     version_number: data.versionNumber ?? data.version_number,
@@ -52,7 +166,7 @@ function versionSummary(version: any, includeContent = true) {
     title: data.title,
     excerpt: data.excerpt,
     ...(includeContent ? { content_json: data.contentJson ?? data.content_json, content_html: data.contentHtml ?? data.content_html } : {}),
-    blocks_json: normalizeBlogBlocks(data.blocksJson ?? data.blocks_json),
+    blocks_json: hydratedBlocks,
     seo_title: data.seoTitle ?? data.seo_title,
     seo_description: data.seoDescription ?? data.seo_description,
     canonical_url: data.canonicalUrl ?? data.canonical_url,
@@ -81,7 +195,7 @@ function hasUnpublishedTemplateChanges(blog: any) {
   return draftTemplate.templateKey !== publishedTemplate.templateKey || draftTemplate.templateVersion !== publishedTemplate.templateVersion;
 }
 
-function serializeBlog(blog: any, includeContent = false) {
+function serializeBlog(blog: any, includeContent = false, mediaMap?: Map<string | number, any>) {
   const data = plain(blog);
   const draft = data.currentDraftVersion ?? data.current_draft_version;
   return {
@@ -102,15 +216,15 @@ function serializeBlog(blog: any, includeContent = false) {
     has_unpublished_changes: hasUnpublishedChanges(data),
     has_unpublished_template_changes: hasUnpublishedTemplateChanges(data),
     ...(includeContent ? {
-      draft_version: versionSummary(draft),
-      published_version: versionSummary(data.currentPublishedVersion ?? data.current_published_version),
+      draft_version: versionSummary(draft, true, mediaMap),
+      published_version: versionSummary(data.currentPublishedVersion ?? data.current_published_version, true, mediaMap),
       creator: safeAdmin(data.creator),
       updater: safeAdmin(data.updater)
     } : {})
   };
 }
 
-function serializePublicBlog(blog: any) {
+function serializePublicBlog(blog: any, mediaMap?: Map<string | number, any>) {
   const data = plain(blog);
   const published = data.currentPublishedVersion ?? data.current_published_version;
   return {
@@ -124,7 +238,7 @@ function serializePublicBlog(blog: any) {
     published_at: data.publishedAt ?? data.published_at ?? null,
     updated_at: data.updatedAt ?? data.updated_at,
     created_at: data.createdAt ?? data.created_at,
-    published_version: versionSummary(published)
+    published_version: versionSummary(published, true, mediaMap)
   };
 }
 
@@ -251,13 +365,15 @@ export function createBlogService() {
     async listBlogs(raw: unknown, actor: BlogActor) {
       const query = blogListQuerySchema.parse(raw); const include = includeBlog();
       const result = await Blog.findAndCountAll({ where: listWhere(query, actor), include, subQuery: false, limit: query.limit, offset: (query.page - 1) * query.limit, order: (query.sort_by === 'title' ? [[{ model: BlogVersion, as: 'currentDraftVersion' }, 'title', query.sort_order.toUpperCase()]] : [[blogSortColumns[query.sort_by], query.sort_order.toUpperCase()]]) as any, distinct: true });
-      return { items: result.rows.map((blog) => serializeBlog(blog, true)), pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count) };
+      const mediaMap = await buildMediaMapForBlogs(result.rows);
+      return { items: result.rows.map((blog) => serializeBlog(blog, true, mediaMap)), pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count) };
     },
 
     async listTrashedBlogs(raw: unknown, actor: BlogActor) {
       const query = blogTrashListQuerySchema.parse(raw); const include = includeBlog();
       const result = await Blog.findAndCountAll({ where: listWhere({ ...query, status: undefined } as BlogListQuery, actor, true), include, subQuery: false, limit: query.limit, offset: (query.page - 1) * query.limit, order: (query.sort_by === 'title' ? [[{ model: BlogVersion, as: 'currentDraftVersion' }, 'title', query.sort_order.toUpperCase()]] : [[trashSortColumns[query.sort_by], query.sort_order.toUpperCase()]]) as any, distinct: true });
-      return { items: result.rows.map((blog) => serializeBlog(blog)), pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count) };
+      const mediaMap = await buildMediaMapForBlogs(result.rows);
+      return { items: result.rows.map((blog) => serializeBlog(blog, false, mediaMap)), pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count) };
     },
 
     async getBlog(id: string, actor: BlogActor, transaction?: Transaction) {
@@ -266,7 +382,8 @@ export function createBlogService() {
       if (!blog) throw new ApiError(404, 'Blog was not found');
       assertView(actor, blog);
       if (blog.status === 'trashed') throw new ApiError(404, 'Blog was not found');
-      return serializeBlog(blog, true);
+      const mediaMap = await buildMediaMapForBlogs([blog], transaction);
+      return serializeBlog(blog, true, mediaMap);
     },
 
     async updateBlog(id: string, raw: unknown, actor: BlogActor) {
@@ -377,7 +494,8 @@ export function createBlogService() {
       if (!data.currentPublishedVersion && !data.current_published_version) {
         throw new ApiError(404, 'Published version is unavailable');
       }
-      return serializePublicBlog(blog);
+      const mediaMap = await buildMediaMapForBlogs([blog]);
+      return serializePublicBlog(blog, mediaMap);
     },
 
     async listPublicBlogs(rawQuery: unknown) {
@@ -406,8 +524,10 @@ export function createBlogService() {
         distinct: true
       });
 
+      const mediaMap = await buildMediaMapForBlogs(result.rows);
+
       return {
-        items: result.rows.map((blog) => serializePublicBlog(blog)),
+        items: result.rows.map((blog) => serializePublicBlog(blog, mediaMap)),
         pagination: pagination(query.page, query.limit, Array.isArray(result.count) ? result.count.length : result.count)
       };
     }

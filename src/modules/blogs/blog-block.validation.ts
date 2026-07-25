@@ -5,15 +5,21 @@ import { BLOG_BLOCKS_SCHEMA_VERSION, createDefaultBlogBlocks, type BlogBlocksDoc
 const text = (max: number) => z.string().trim().max(max);
 const mediaId = z.string().trim().regex(/^\d+$/, 'Media ID must be numeric').nullable();
 const safeUrl = z.union([z.literal(''), z.string().trim().url().max(2048).refine((value) => /^https?:\/\//i.test(value), 'URL must use HTTP or HTTPS')]);
+const optionalHydratedMedia = {
+  url: z.string().nullable().optional(),
+  original_url: z.string().nullable().optional(),
+  media: z.any().optional()
+};
+
 const actionSchema = z.object({ label: text(80), url: safeUrl }).strict();
 const blogBlocksSchema = z.object({
   schema_version: z.literal(BLOG_BLOCKS_SCHEMA_VERSION),
   blocks: z.object({
     hero: z.object({ category: text(100), breadcrumb: z.array(text(80)).max(5), reviewer: z.object({ name: text(120), credentials: text(160) }).strict(), reading_time_minutes: z.number().int().min(1).max(240).nullable() }).strict(),
     key_takeaways: z.object({ enabled: z.boolean(), heading: text(120), items: z.array(text(240)).max(5) }).strict(),
-    image_comparison: z.object({ enabled: z.boolean(), heading: text(120), items: z.array(z.object({ media_id: mediaId, title: text(120), description: text(500) }).strict()).max(6) }).strict(),
+    image_comparison: z.object({ enabled: z.boolean(), heading: text(120), items: z.array(z.object({ media_id: mediaId, title: text(120), description: text(500), ...optionalHydratedMedia }).strict()).max(6) }).strict(),
     numbered_list: z.object({ enabled: z.boolean(), heading: text(120), items: z.array(z.object({ title: text(120), description: text(500) }).strict()).max(10) }).strict(),
-    expert_quote: z.object({ enabled: z.boolean(), quote: text(1000), name: text(120), role: text(160), media_id: mediaId, profile_url: safeUrl }).strict(),
+    expert_quote: z.object({ enabled: z.boolean(), quote: text(1000), name: text(120), role: text(160), media_id: mediaId, profile_url: safeUrl, ...optionalHydratedMedia }).strict(),
     medical_cta: z.object({ enabled: z.boolean(), heading: text(180), description: text(500), primary: actionSchema, secondary: actionSchema }).strict(),
     faq: z.object({ enabled: z.boolean(), heading: text(160), items: z.array(z.object({ question: text(240), answer: text(1000) }).strict()).max(10) }).strict(),
     feedback: z.object({ enabled: z.boolean(), prompt: text(160) }).strict(),
@@ -23,6 +29,29 @@ const blogBlocksSchema = z.object({
 }).strict();
 
 function blockErrors(error: ZodError) { return error.issues.map((issue) => ({ field: `blocks_json.${issue.path.join('.')}`, message: issue.message })); }
+
+function stripHydratedMedia(data: any): any {
+  if (!data || typeof data !== 'object') return data;
+  const clone = JSON.parse(JSON.stringify(data));
+  if (clone.blocks) {
+    if (clone.blocks.expert_quote) {
+      delete clone.blocks.expert_quote.url;
+      delete clone.blocks.expert_quote.original_url;
+      delete clone.blocks.expert_quote.media;
+    }
+    if (clone.blocks.image_comparison && Array.isArray(clone.blocks.image_comparison.items)) {
+      clone.blocks.image_comparison.items.forEach((item: any) => {
+        if (item && typeof item === 'object') {
+          delete item.url;
+          delete item.original_url;
+          delete item.media;
+        }
+      });
+    }
+  }
+  return clone;
+}
+
 export function validateBlogBlocks(value: unknown): BlogBlocksDocument {
   try { return blogBlocksSchema.parse(value) as BlogBlocksDocument; }
   catch (error) { if (error instanceof ZodError) throw new ApiError(422, 'Some article sections need attention.', blockErrors(error)); throw error; }
@@ -34,7 +63,7 @@ export function normalizeBlogBlocks(value: unknown): BlogBlocksDocument {
     try { parsed = JSON.parse(value); }
     catch { throw new ApiError(422, 'Some article sections need attention.', [{ field: 'blocks_json', message: 'Article sections contain invalid JSON.' }]); }
   }
-  return validateBlogBlocks(parsed);
+  return validateBlogBlocks(stripHydratedMedia(parsed));
 }
 export function collectBlogBlockMediaIds(document: BlogBlocksDocument): string[] {
   const ids = document.blocks.image_comparison.items.map((item) => item.media_id).concat(document.blocks.expert_quote.media_id).filter((id): id is string => Boolean(id));
