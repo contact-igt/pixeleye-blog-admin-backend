@@ -1,11 +1,19 @@
-﻿import './index.js';
+import './index.js';
 import { Router } from 'express';
 import { authenticateAdmin, requireRole } from '../../middlewares/auth/authenticate-admin.js';
 import { createBlogController } from './blog.controller.js';
+import { createPublicBlogController } from './public-blog.controller.js';
+import { createAdminFeedbackController } from './admin-feedback.controller.js';
 
 export function createBlogRouter(): Router {
   const router = Router();
   const controller = createBlogController();
+  const publicController = createPublicBlogController();
+  const feedbackController = createAdminFeedbackController();
+
+  router.get('/public', publicController.list);
+  router.get('/public/:slug', publicController.detail);
+
   router.use(authenticateAdmin);
 
   router.get('/templates', controller.templates);
@@ -16,6 +24,7 @@ export function createBlogRouter(): Router {
   router.post('/:id/publish', requireRole('super_admin', 'editor'), controller.publish);
   router.post('/:id/unpublish', requireRole('super_admin', 'editor'), controller.unpublish);
   router.post('/:id/restore', requireRole('super_admin', 'editor'), controller.restore);
+  router.get('/:blogId/feedback-summary', feedbackController.getSummary);
   router.get('/:id', controller.detail);
   router.patch('/:id', requireRole('super_admin', 'editor', 'author'), controller.update);
   router.delete('/:id', requireRole('super_admin', 'editor', 'author'), controller.trash);

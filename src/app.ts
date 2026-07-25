@@ -4,8 +4,8 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import { authenticateDatabase } from './config/database.js';
 import { corsOptions } from './config/cors.js';
-import { initializeAuthAssociations, initializeBlogAssociations, initializeMediaAssociations } from './database/associations/index.js';
-import { initializeAuthModels, initializeBlogModels, initializeMediaModels } from './database/models/index.js';
+import { initializeAuthAssociations, initializeBlogAssociations, initializeCustomTemplateAssociations, initializeMediaAssociations, initializeNewsletterAssociations } from './database/associations/index.js';
+import { initializeAuthModels, initializeBlogModels, initializeCustomTemplateModels, initializeMediaModels, initializeNewsletterModels } from './database/models/index.js';
 import { env } from './config/environment.js';
 import { errorHandler } from './middlewares/error-handler.js';
 import { notFound } from './middlewares/not-found.js';
@@ -22,9 +22,13 @@ export function createApp(
   initializeAuthModels();
   initializeMediaModels();
   initializeBlogModels();
+  initializeCustomTemplateModels();
+  initializeNewsletterModels();
   initializeAuthAssociations();
   initializeMediaAssociations();
   initializeBlogAssociations();
+  initializeCustomTemplateAssociations();
+  initializeNewsletterAssociations();
 
   const app = express();
   app.disable('x-powered-by');

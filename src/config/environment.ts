@@ -1,4 +1,4 @@
-﻿import 'dotenv/config';
+import 'dotenv/config';
 import { z } from 'zod';
 const appStageSchema = z.enum(['local', 'development', 'production']);
 const databaseKeys = ['DB_HOST', 'DB_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'] as const;
@@ -103,6 +103,14 @@ const environmentSchema = z.object({
   SMTP_PASSWORD: z.string().default(''),
   MAIL_FROM_NAME: z.string().default('Pixel Eye Hospitals'),
   MAIL_FROM_EMAIL: z.union([z.literal(''), z.string().email()]).default(''),
+  FEEDBACK_VISITOR_HASH_SECRET: z.string().default('default-feedback-secret-change-in-prod'),
+  NEWSLETTER_HASH_SECRET: z.string().default('default-newsletter-secret-change-in-prod'),
+  NEWSLETTER_VERIFICATION_TOKEN_TTL_HOURS: z.coerce.number().int().positive().max(720).default(24),
+  NEWSLETTER_VERIFICATION_RESEND_COOLDOWN_MINUTES: z.coerce.number().int().positive().max(1440).default(5),
+  NEWSLETTER_WORKER_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(50),
+  NEWSLETTER_WORKER_CONCURRENCY: z.coerce.number().int().positive().max(100).default(5),
+  NEWSLETTER_MAX_ATTEMPTS: z.coerce.number().int().positive().max(10).default(3),
+  NEWSLETTER_RETRY_BASE_DELAY_SECONDS: z.coerce.number().int().positive().max(3600).default(60),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info')
 });
 

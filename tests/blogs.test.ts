@@ -1,4 +1,4 @@
-﻿import request from 'supertest';
+import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { sequelize } from '../src/config/database.js';
@@ -6,6 +6,8 @@ import { AdminSession, AdminUser } from '../src/modules/auth/index.js';
 import { AuditLog } from '../src/modules/auth/audit-log.model.js';
 import { Blog } from '../src/modules/blogs/blog.model.js';
 import { BlogVersion } from '../src/modules/blogs/blog-version.model.js';
+import { sampleCustomTemplateConfig } from '../src/modules/blogs/custom-templates/custom-template.sample.js';
+import { CustomTemplate, CustomTemplateVersion } from '../src/modules/custom-templates/custom-template.model.js';
 import { MediaAsset } from '../src/modules/media/media.model.js';
 import { generateBlogHtmlFromJson, isBlogContentEmpty, normalizeBlogSlug, sanitizeGeneratedBlogHtml, validateBlogEditorJson } from '../src/modules/blogs/blog.validation.js';
 import { createBlogService } from '../src/modules/blogs/blog.service.js';
@@ -82,6 +84,50 @@ describe('blog service foundation', () => {
     await expect(service.moveBlogToTrash('9', { id: '1', role: 'editor' })).resolves.toMatchObject({ status: 'trashed' });
     const trashed = blog({ status: 'trashed', statusBeforeTrash: 'published' }); vi.spyOn(Blog, 'findByPk').mockResolvedValue(trashed as never);
     await expect(service.restoreBlog('9', { id: '1', role: 'editor' })).resolves.toMatchObject({ status: 'unpublished' });
+  });
+  it('returns draft and published content JSON in the blog list response', async () => {
+    const draftDoc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'draft body' }] }] };
+    const publishedDoc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'published body' }] }] };
+    vi.spyOn(Blog, 'findAndCountAll').mockResolvedValue({
+      rows: [blog({
+        currentDraftVersion: version({ contentJson: draftDoc }),
+        currentPublishedVersion: version({ id: '21', versionType: 'published', contentJson: publishedDoc }),
+        currentPublishedVersionId: '21'
+      })],
+      count: 1
+    } as never);
+
+    const result = await createBlogService().listBlogs({}, { id: '1', role: 'editor' });
+
+    expect(result.items[0]).toMatchObject({
+      draft_version: { content_json: draftDoc },
+      published_version: { content_json: publishedDoc }
+    });
+  });
+
+  it('creates blog with active Custom Template snapshotting layout_config_json and version IDs', async () => {
+    vi.spyOn(Blog, 'findOne').mockResolvedValue(null);
+    vi.spyOn(MediaAsset, 'findByPk').mockResolvedValue(media() as never);
+    vi.spyOn(Blog, 'create').mockResolvedValue(blog() as never);
+    vi.spyOn(BlogVersion, 'create').mockResolvedValue(version() as never);
+    vi.spyOn(Blog, 'findByPk').mockResolvedValue(blog() as never);
+
+    vi.spyOn(CustomTemplate, 'findByPk').mockResolvedValue({ id: '100', status: 'active', currentVersionId: '200', ownerId: '1' } as never);
+    vi.spyOn(CustomTemplateVersion, 'findByPk').mockResolvedValue({ id: '200', customTemplateId: '100', layoutConfigJson: sampleCustomTemplateConfig } as never);
+
+    const service = createBlogService();
+    await service.createBlog({ title: 'Custom Blog', template_key: 'custom_template', custom_template_id: '100' }, { id: '1', role: 'editor' });
+
+    expect(BlogVersion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        templateKey: 'custom_template',
+        templateVersion: 1,
+        customTemplateId: '100',
+        customTemplateVersionId: '200',
+        templateConfigJson: sampleCustomTemplateConfig
+      }),
+      expect.anything()
+    );
   });
 });
 

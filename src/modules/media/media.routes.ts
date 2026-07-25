@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+import { Router } from 'express';
 import { MulterError } from 'multer';
 import { ApiError } from '../../utils/api-error.js';
 import { authenticateAdmin, requireRole } from '../../middlewares/auth/authenticate-admin.js';
@@ -26,6 +26,7 @@ export function createMediaRouter(): Router {
       void controller.upload(request, response, next);
     });
   });
+  router.patch('/assets/:id', authenticateAdmin, requireRole('super_admin', 'editor', 'author'), controller.update);
   router.post('/assets/:id/restore', authenticateAdmin, requireRole('super_admin', 'editor', 'author'), controller.restore);
   router.delete('/assets/:id/permanent', authenticateAdmin, requireRole('super_admin', 'editor'), controller.permanentDelete);
   router.delete('/assets/:id', authenticateAdmin, requireRole('super_admin', 'editor', 'author'), controller.softDelete);

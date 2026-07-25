@@ -1,9 +1,9 @@
-﻿import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { sendSuccess } from '../../utils/api-response.js';
 import { ApiError } from '../../utils/api-error.js';
 import { createMediaService, type MediaService } from './media.service.js';
 import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
-import { mediaUploadBodySchema } from './media.validation.js';
+import { mediaUploadBodySchema, mediaUpdateBodySchema } from './media.validation.js';
 
 function currentActor(request: Request) {
   if (!request.authenticatedAdmin) throw new ApiError(401, 'Authentication is required');
@@ -62,6 +62,25 @@ export function createMediaController(service: MediaService = createMediaService
           metadata: { media_asset_id: asset.id, purpose: asset.purpose }
         });
         return sendSuccess(response, 'Media asset uploaded', asset, 201);
+      } catch (error) {
+        next(error);
+      }
+    },
+
+    async update(request: Request, response: Response, next: NextFunction) {
+      try {
+        const actor = currentActor(request);
+        const body = mediaUpdateBodySchema.parse(request.body);
+        const asset = await service.updateMediaAsset(String(request.params.id ?? ''), body, actor);
+        await writeAuthAuditLog({
+          action: 'MEDIA_ASSET_UPDATED',
+          adminUserId: actor.id,
+          requestId: request.requestId,
+          ip: request.ip,
+          userAgent: request.header('user-agent') ?? undefined,
+          metadata: { media_asset_id: asset.id }
+        });
+        return sendSuccess(response, 'Media asset updated', asset);
       } catch (error) {
         next(error);
       }
