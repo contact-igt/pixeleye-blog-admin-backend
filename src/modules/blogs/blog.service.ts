@@ -6,9 +6,11 @@ import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
 import { MediaAsset } from '../media/media.model.js';
 import { Blog, type BlogStatus } from './blog.model.js';
 import { BlogVersion } from './blog-version.model.js';
-import { blogBlockCompletionErrors, collectBlogBlockMediaIds, isEnabledBlogBlockComplete, normalizeBlogBlocks } from './blog-block.validation.js';
+import { blogBlockCompletionErrors, collectBlogBlockMediaIds, customInstanceCompletionErrors, isEnabledBlogBlockComplete, normalizeBlogBlocks } from './blog-block.validation.js';
 import type { BlogBlocksDocument } from './blog-block.types.js';
 import {
+  INTERNAL_CUSTOM_TEMPLATE_KEY,
+  INTERNAL_CUSTOM_TEMPLATE_RENDERER_VERSION,
   isValidTemplateSnapshot,
   listBlogTemplates,
   normalizeStoredTemplate,
@@ -16,6 +18,9 @@ import {
   templateMetadata,
   type BlogTemplateSnapshot
 } from './blog-template.registry.js';
+import { assertUse } from '../custom-templates/custom-template.authorization.js';
+import { CustomTemplate, CustomTemplateVersion } from '../custom-templates/custom-template.model.js';
+import { validateCustomTemplateLayout } from './custom-templates/custom-template.validation.js';
 import {
   blogListQuerySchema,
   blogTrashListQuerySchema,
@@ -174,6 +179,9 @@ function versionSummary(version: any, includeContent = true, mediaMap?: Map<stri
     template_key: snapshot.templateKey,
     template_version: snapshot.templateVersion,
     template: templateMetadata(snapshot),
+    custom_template_id: snapshot.customTemplateId,
+    custom_template_version_id: snapshot.customTemplateVersionId,
+    ...(snapshot.templateKey === 'custom_template' ? { template_config_json: snapshot.invalid ? null : snapshot.templateConfigJson, template_invalid: Boolean(snapshot.invalid) } : {}),
     created_at: data.createdAt ?? data.created_at
   };
 }
@@ -266,6 +274,13 @@ async function validateFeaturedMedia(id?: string | null, transaction?: Transacti
 async function validateBlockMedia(document: BlogBlocksDocument, transaction?: Transaction) {
   const references = document.blocks.image_comparison.items.map((item, index) => ({ id: item.media_id, field: `blocks_json.blocks.image_comparison.items.${index}.media_id` }));
   references.push({ id: document.blocks.expert_quote.media_id, field: 'blocks_json.blocks.expert_quote.media_id' });
+  for (const [blockId, instance] of Object.entries(document.custom_instances ?? {})) {
+    if (instance.componentKey === 'image_comparison') {
+      instance.items.forEach((item, index) => references.push({ id: item.media_id, field: `blocks_json.custom_instances.${blockId}.items.${index}.media_id` }));
+    } else if (instance.componentKey === 'expert_quote') {
+      references.push({ id: instance.media_id, field: `blocks_json.custom_instances.${blockId}.media_id` });
+    }
+  }
   for (const reference of references) {
     if (!reference.id) continue;
     const media = await MediaAsset.findByPk(reference.id, { transaction, paranoid: false });
@@ -279,6 +294,36 @@ async function validateBlockMedia(document: BlogBlocksDocument, transaction?: Tr
 function parseContentJson(value: unknown): unknown {
   if (typeof value === 'string') { try { return JSON.parse(value); } catch { return value; } }
   return value;
+}
+
+async function resolveBlogTemplateSelection(
+  input: { template_key?: string; custom_template_id?: string | null },
+  actor: BlogActor,
+  transaction: Transaction
+): Promise<BlogTemplateSnapshot> {
+  if (input.template_key !== INTERNAL_CUSTOM_TEMPLATE_KEY) {
+    return resolveBlogTemplate(input.template_key);
+  }
+  const customTemplateId = input.custom_template_id;
+  if (!customTemplateId) throw new ApiError(422, 'custom_template_id is required when template_key is custom_template');
+  const template = await CustomTemplate.findByPk(customTemplateId, { transaction });
+  if (!template) throw new ApiError(422, 'Selected Custom Template was not found');
+  const templateData = plain(template);
+  assertUse({ id: actor.id, role: actor.role }, templateData);
+  if (templateData.status !== 'active') throw new ApiError(409, 'Selected Custom Template is not active');
+  const currentVersionId = templateData.currentVersionId ?? templateData.current_version_id;
+  if (!currentVersionId) throw new ApiError(422, 'Selected Custom Template has no version to use');
+  const version = await CustomTemplateVersion.findByPk(currentVersionId, { transaction });
+  if (!version) throw new ApiError(422, 'Selected Custom Template has no version to use');
+  const versionData = plain(version);
+  const layout = validateCustomTemplateLayout(versionData.layoutConfigJson ?? versionData.layout_config_json);
+  return {
+    templateKey: INTERNAL_CUSTOM_TEMPLATE_KEY,
+    templateVersion: INTERNAL_CUSTOM_TEMPLATE_RENDERER_VERSION,
+    templateConfigJson: layout as unknown as Record<string, unknown>,
+    customTemplateId: String(customTemplateId),
+    customTemplateVersionId: String(currentVersionId)
+  };
 }
 
 function versionPayload(input: CreateBlogInput | UpdateBlogInput, template: BlogTemplateSnapshot) {
@@ -335,10 +380,26 @@ function publishChecklist(version: any, blog: any) {
     items.push(complete('block_hero_reviewer', Boolean(blocks.blocks.hero.reviewer.name), 'Medical reviewer is complete', 'Medical reviewer is recommended', true));
     items.push(complete('block_hero_reading_time', Boolean(blocks.blocks.hero.reading_time_minutes), 'Reading time is complete', 'Reading time is recommended', true));
     if (blocks.blocks.expert_quote.enabled) items.push(complete('block_expert_avatar', Boolean(blocks.blocks.expert_quote.media_id), 'Expert avatar is complete', 'Expert avatar is optional', true));
+  } else if (snapshot.templateKey === 'custom_template' && !snapshot.invalid) {
+    const instanceErrors = customInstanceCompletionErrors(blocks);
+    for (const [blockId, instance] of Object.entries(blocks.custom_instances ?? {})) {
+      const label = instance.componentKey.replace(/_/g, ' ');
+      const done = !instanceErrors.some((error) => error.field.startsWith(`blocks_json.custom_instances.${blockId}.`));
+      items.push(complete(`block_${blockId}`, done, `${label} is complete`, `Complete the ${label} section`));
+    }
   }
   return { ready: !items.some((entry) => entry.status === 'incomplete'), items };
 }
-function publishReady(version: any, blog: any) { const checklist = publishChecklist(version, blog); if (!checklist.ready) { const blocks = normalizeBlogBlocks(plain(version).blocksJson ?? plain(version).blocks_json); throw new ApiError(422, checklist.items.filter((item) => item.status === 'incomplete').map((item) => item.message).join('. '), blogBlockCompletionErrors(blocks)); } }
+function publishReady(version: any, blog: any) {
+  const checklist = publishChecklist(version, blog);
+  if (!checklist.ready) {
+    const draft = plain(version);
+    const blocks = normalizeBlogBlocks(draft.blocksJson ?? draft.blocks_json);
+    const snapshot = normalizeStoredTemplate(draft);
+    const blockErrors = snapshot.templateKey === 'custom_template' ? customInstanceCompletionErrors(blocks) : blogBlockCompletionErrors(blocks);
+    throw new ApiError(422, checklist.items.filter((item) => item.status === 'incomplete').map((item) => item.message).join('. '), blockErrors);
+  }
+}
 function listWhere(query: BlogListQuery, actor: BlogActor, trashed = false) { const where: Record<string | symbol, unknown> = trashed ? { status: 'trashed' } : { status: { [Op.ne]: 'trashed' } }; if (!trashed && query.status) where.status = query.status; if (query.author_id && canManageAll(actor)) where.authorId = query.author_id; if (query.has_featured_image === 'true') where.featuredMediaId = { [Op.ne]: null }; if (query.has_featured_image === 'false') where.featuredMediaId = null; if (actor.role === 'author') where.authorId = actor.id; if (query.search) { const like = `%${query.search.replace(/[%_\\]/g, '\\$&')}%`; where[Op.or] = [{ slug: { [Op.like]: like } }, { '$currentDraftVersion.title$': { [Op.like]: like } }, { '$currentDraftVersion.excerpt$': { [Op.like]: like } }]; } return where; }
 
 export function createBlogService() {
@@ -349,15 +410,15 @@ export function createBlogService() {
       assertCreate(actor);
       const input = createBlogSchema.parse(raw);
       const slug = normalizeBlogSlug(input.slug || input.title);
-      const template = resolveBlogTemplate(input.template_key);
       return sequelize.transaction(async (transaction) => {
+        const template = await resolveBlogTemplateSelection(input, actor, transaction);
         await ensureUniqueSlug(slug, undefined, transaction);
         await validateFeaturedMedia(input.featured_media_id, transaction);
         await validateBlockMedia(normalizeBlogBlocks(input.blocks_json), transaction);
         const blog = await Blog.create({ slug, status: 'draft', authorId: actor.id, featuredMediaId: input.featured_media_id ?? null, createdBy: actor.id, updatedBy: actor.id }, { transaction });
         const draft = await BlogVersion.create({ blogId: blog.id, versionNumber: 1, versionType: 'draft', ...versionPayload(input, template), title: input.title, createdBy: actor.id } as any, { transaction });
         await blog.update({ currentDraftVersionId: draft.id }, { transaction });
-        await writeAuthAuditLog({ action: 'BLOG_CREATED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug, template_key: template.templateKey, template_version: template.templateVersion } });
+        await writeAuthAuditLog({ action: 'BLOG_CREATED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug, template_key: template.templateKey, template_version: template.templateVersion } }, transaction);
         return this.getBlog(String(blog.id), actor, transaction);
       });
     },
@@ -402,7 +463,7 @@ export function createBlogService() {
         const draft = await BlogVersion.findByPk(blog.currentDraftVersionId, { transaction });
         if (!draft) throw new ApiError(500, 'Blog draft version is missing');
         const oldTemplate = normalizeStoredTemplate(plain(draft));
-        const nextTemplate = input.template_key ? resolveBlogTemplate(input.template_key) : oldTemplate;
+        const nextTemplate = input.template_key ? await resolveBlogTemplateSelection(input, actor, transaction) : oldTemplate;
         const nextBlocks = normalizeBlogBlocks(input.blocks_json === undefined ? draft.blocksJson : input.blocks_json);
         await validateBlockMedia(nextBlocks, transaction);
         const payload = versionPayload({
@@ -420,9 +481,9 @@ export function createBlogService() {
         await draft.update(payload as any, { transaction });
         const templateChanged = oldTemplate.templateKey !== nextTemplate.templateKey || oldTemplate.templateVersion !== nextTemplate.templateVersion;
         if (templateChanged) {
-          await writeAuthAuditLog({ action: 'BLOG_TEMPLATE_CHANGED', adminUserId: actor.id, metadata: { blog_id: blog.id, old_template_key: oldTemplate.templateKey, old_template_version: oldTemplate.templateVersion, new_template_key: nextTemplate.templateKey, new_template_version: nextTemplate.templateVersion, administrator_id: actor.id, changed_at: new Date().toISOString() } });
+          await writeAuthAuditLog({ action: 'BLOG_TEMPLATE_CHANGED', adminUserId: actor.id, metadata: { blog_id: blog.id, old_template_key: oldTemplate.templateKey, old_template_version: oldTemplate.templateVersion, new_template_key: nextTemplate.templateKey, new_template_version: nextTemplate.templateVersion, administrator_id: actor.id, changed_at: new Date().toISOString() } }, transaction);
         }
-        await writeAuthAuditLog({ action: 'BLOG_UPDATED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: updates.slug ?? blog.slug, changed_fields: Object.keys(input) } });
+        await writeAuthAuditLog({ action: 'BLOG_UPDATED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: updates.slug ?? blog.slug, changed_fields: Object.keys(input) } }, transaction);
         return this.getBlog(id, actor, transaction);
       });
     },
@@ -474,7 +535,7 @@ export function createBlogService() {
         }, { transaction });
         const previousStatus = blog.status;
         await blog.update({ status: 'published', currentPublishedVersionId: published.id, publishedAt: blog.publishedAt ?? new Date(), unpublishedAt: null, updatedBy: actor.id }, { transaction });
-        await writeAuthAuditLog({ action: previousStatus === 'published' ? 'BLOG_REPUBLISHED' : 'BLOG_PUBLISHED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: blog.slug, version_number: versionNumber, template_key: template.templateKey, template_version: template.templateVersion } });
+        await writeAuthAuditLog({ action: previousStatus === 'published' ? 'BLOG_REPUBLISHED' : 'BLOG_PUBLISHED', adminUserId: actor.id, metadata: { blog_id: blog.id, slug: blog.slug, version_number: versionNumber, template_key: template.templateKey, template_version: template.templateVersion } }, transaction);
         return this.getBlog(id, actor, transaction);
       });
     },

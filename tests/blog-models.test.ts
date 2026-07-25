@@ -72,8 +72,12 @@ describe('central Blog and BlogVersion models', () => {
       'id', 'blogId', 'versionNumber', 'versionType', 'title', 'excerpt',
       'contentJson', 'contentHtml', 'seoTitle', 'seoDescription', 'canonicalUrl',
       'featuredMediaId', 'templateKey', 'templateVersion', 'templateConfigJson',
-      'blocksJson', 'createdBy', 'created_at'
+      'customTemplateId', 'customTemplateVersionId', 'blocksJson', 'createdBy', 'created_at'
     ]));
+    expect(attributes.customTemplateId.allowNull).toBe(true);
+    expect(attributes.customTemplateVersionId.allowNull).toBe(true);
+    expect((attributes.customTemplateId as any).onDelete).toBe('RESTRICT');
+    expect((attributes.customTemplateVersionId as any).onDelete).toBe('RESTRICT');
     expect(attributes.contentJson.type.constructor.name).toBe('JSONTYPE');
     expect(attributes.templateConfigJson.type.constructor.name).toBe('JSONTYPE');
     expect(attributes.blocksJson.type.constructor.name).toBe('JSONTYPE');
@@ -91,7 +95,8 @@ describe('central Blog and BlogVersion models', () => {
     expect(indexes).toEqual(expect.arrayContaining([
       'idx_blog_versions_blog_id', 'idx_blog_versions_template',
       'idx_blog_versions_version_type', 'idx_blog_versions_version_number',
-      'idx_blog_versions_created_at'
+      'idx_blog_versions_created_at', 'idx_blog_versions_custom_template_id',
+      'idx_blog_versions_custom_template_version_id'
     ]));
     expect(attributes.blogId.references).toMatchObject({ model: tableNames.BLOGS, key: 'id' });
     expect(attributes.featuredMediaId.references).toMatchObject({ model: tableNames.MEDIA_ASSETS, key: 'id' });

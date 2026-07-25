@@ -1,4 +1,4 @@
-﻿import multer from 'multer';
+import multer from 'multer';
 import { z } from 'zod';
 import { env } from '../../config/environment.js';
 import { ApiError } from '../../utils/api-error.js';
@@ -22,6 +22,14 @@ export const mediaUploadBodySchema = z.object({
 });
 
 export type MediaUploadBody = z.infer<typeof mediaUploadBodySchema>;
+
+export const mediaUpdateBodySchema = z.object({
+  purpose: z.enum(mediaPurposes).optional(),
+  alt_text: z.string().trim().max(255).nullable().optional(),
+  original_file_name: z.string().trim().max(255).optional()
+});
+
+export type MediaUpdateBody = z.infer<typeof mediaUpdateBodySchema>;
 
 export const mediaAssetStatuses = ['active', 'trashed', 'deleting', 'delete_failed', 'deleted'] as const;
 export const mediaProviders = ['cloudflare_r2', 'cloudflare_images'] as const;

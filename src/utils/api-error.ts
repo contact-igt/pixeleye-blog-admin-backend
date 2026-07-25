@@ -3,7 +3,8 @@ export class ApiError extends Error {
     public readonly statusCode: number,
     message: string,
     public readonly errors?: Array<{ field?: string; message: string }>,
-    cause?: unknown
+    cause?: unknown,
+    public readonly data?: Record<string, unknown>
   ) {
     super(message, { cause });
     this.name = 'ApiError';

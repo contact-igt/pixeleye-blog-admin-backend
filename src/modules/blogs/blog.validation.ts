@@ -4,7 +4,7 @@ import Link from '@tiptap/extension-link';
 import sanitizeHtml from 'sanitize-html';
 import { z } from 'zod';
 import { ApiError } from '../../utils/api-error.js';
-import { blogTemplateKeys } from './blog-template.registry.js';
+import { INTERNAL_CUSTOM_TEMPLATE_KEY, storedBlogTemplateKeys } from './blog-template.registry.js';
 
 export const blogStatuses = ['draft', 'published', 'unpublished', 'trashed'] as const;
 export const blogSortFields = ['created_at', 'updated_at', 'published_at', 'title', 'status'] as const;
@@ -16,9 +16,25 @@ const contentJsonSchema = z.unknown().optional().nullable();
 const editorExtensions = [StarterKit.configure({ heading: { levels: [2, 3, 4] }, link: false }), Link.configure({ protocols: ['http', 'https'], openOnClick: false })];
 const allowedNodes = new Set(['doc', 'paragraph', 'text', 'heading', 'bulletList', 'orderedList', 'listItem', 'blockquote', 'horizontalRule', 'hardBreak']);
 const allowedMarks = new Set(['bold', 'italic', 'link']);
-export const createBlogSchema = z.object({ title: z.string().trim().min(3).max(180), slug: z.string().trim().max(191).optional(), excerpt: optionalTrimmed(500), content_json: contentJsonSchema, content_html: z.unknown().optional().nullable(), featured_media_id: optionalNumericString.nullable(), seo_title: optionalTrimmed(70), seo_description: optionalTrimmed(170), canonical_url: z.string().trim().url().max(2048).optional().nullable().transform((value) => value || null), template_key: z.enum(blogTemplateKeys).optional(), blocks_json: z.unknown().optional().nullable() }).strict();
+const baseBlogSchema = z.object({ title: z.string().trim().min(3).max(180), slug: z.string().trim().max(191).optional(), excerpt: optionalTrimmed(500), content_json: contentJsonSchema, content_html: z.unknown().optional().nullable(), featured_media_id: optionalNumericString.nullable(), seo_title: optionalTrimmed(70), seo_description: optionalTrimmed(170), canonical_url: z.string().trim().url().max(2048).optional().nullable().transform((value) => value || null), template_key: z.enum(storedBlogTemplateKeys).optional(), custom_template_id: optionalNumericString.nullable(), blocks_json: z.unknown().optional().nullable() }).strict();
+function assertTemplateSelection(value: { template_key?: string; custom_template_id?: string | null }, context: z.RefinementCtx) {
+  if (value.template_key === INTERNAL_CUSTOM_TEMPLATE_KEY && !value.custom_template_id) {
+    context.addIssue({ code: 'custom', path: ['custom_template_id'], message: 'custom_template_id is required when template_key is custom_template' });
+  }
+  if (value.template_key && value.template_key !== INTERNAL_CUSTOM_TEMPLATE_KEY && value.custom_template_id) {
+    context.addIssue({ code: 'custom', path: ['custom_template_id'], message: 'custom_template_id must not be set for a system template_key' });
+  }
+  if (value.custom_template_id && value.template_key !== INTERNAL_CUSTOM_TEMPLATE_KEY && value.template_key === undefined) {
+    context.addIssue({ code: 'custom', path: ['custom_template_id'], message: 'custom_template_id requires template_key to be set to custom_template' });
+  }
+}
+export const createBlogSchema = baseBlogSchema.superRefine(assertTemplateSelection);
 const forbiddenUpdateFields = ['author_id', 'created_by', 'updated_by', 'published_at', 'trashed_at', 'status', 'current_draft_version_id', 'current_published_version_id', 'created_at', 'updated_at'] as const;
-export const updateBlogSchema = createBlogSchema.partial().superRefine((value, context) => { for (const field of forbiddenUpdateFields) if (field in value) context.addIssue({ code: 'custom', path: [field], message: `${field} cannot be updated directly` }); if (Object.keys(value).length === 0) context.addIssue({ code: 'custom', message: 'At least one editable field is required' }); });
+export const updateBlogSchema = baseBlogSchema.partial().superRefine((value, context) => {
+  for (const field of forbiddenUpdateFields) if (field in value) context.addIssue({ code: 'custom', path: [field], message: `${field} cannot be updated directly` });
+  if (Object.keys(value).length === 0) context.addIssue({ code: 'custom', message: 'At least one editable field is required' });
+  assertTemplateSelection(value, context);
+});
 export const blogListQuerySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).default(20).transform((value) => Math.min(value, 100)), search: z.string().trim().max(120).optional().transform((value) => value || undefined), status: z.enum(blogStatuses).optional(), author_id: optionalNumericString, has_featured_image: z.enum(['true', 'false']).optional(), sort_by: z.enum(blogSortFields).default('updated_at'), sort_order: z.enum(blogSortOrders).default('desc') });
 export const blogTrashListQuerySchema = blogListQuerySchema.extend({ sort_by: z.enum(['trashed_at', 'updated_at', 'title']).default('trashed_at') }).omit({ status: true, has_featured_image: true });
 export const publicBlogListQuerySchema = z.object({ page: z.coerce.number().int().min(1).default(1), limit: z.coerce.number().int().min(1).default(20).transform((value) => Math.min(value, 100)), search: z.string().trim().max(120).optional().transform((value) => value || undefined), sort_by: z.enum(['published_at', 'title', 'created_at']).default('published_at'), sort_order: z.enum(['asc', 'desc']).default('desc') });

@@ -9,11 +9,13 @@ export const errorHandler: ErrorRequestHandler = (error, request, response, _nex
   let statusCode = 500;
   let message = 'An unexpected error occurred';
   let errors: Array<{ field?: string; message: string }> | undefined;
+  let data: Record<string, unknown> | undefined;
 
   if (error instanceof ApiError) {
     statusCode = error.statusCode;
     message = error.message;
     errors = error.errors;
+    data = error.data;
   } else if (error instanceof UniqueConstraintError) {
     statusCode = 409;
     message = 'A record with the provided value already exists';
@@ -47,6 +49,7 @@ export const errorHandler: ErrorRequestHandler = (error, request, response, _nex
     success: false,
     message,
     ...(errors ? { errors } : {}),
+    ...(data ? { data } : {}),
     request_id: request.requestId,
     ...(env.NODE_ENV !== 'production' && statusCode === 500 ? { debug: error instanceof Error ? error.message : 'Unknown error' } : {})
   });

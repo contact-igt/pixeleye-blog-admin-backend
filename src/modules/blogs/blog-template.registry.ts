@@ -3,6 +3,16 @@ export type BlogTemplateKey = (typeof blogTemplateKeys)[number];
 export type BlogTemplateLayout = 'single_column' | 'article_sidebar';
 export type BlogTemplateVersion = 1 | 2;
 
+export const INTERNAL_CUSTOM_TEMPLATE_KEY = 'custom_template' as const;
+export const storedBlogTemplateKeys = [...blogTemplateKeys, INTERNAL_CUSTOM_TEMPLATE_KEY] as const;
+export type StoredBlogTemplateKey = (typeof storedBlogTemplateKeys)[number];
+
+export const INTERNAL_CUSTOM_TEMPLATE_RENDERER_VERSION = 1;
+
+export type SystemBlogTemplateSelection = { kind: 'system'; templateKey: BlogTemplateKey };
+export type CustomBlogTemplateSelection = { kind: 'custom'; customTemplateId: string };
+export type BlogTemplateSelection = SystemBlogTemplateSelection | CustomBlogTemplateSelection;
+
 export interface BlogTemplateDefinition {
   key: BlogTemplateKey;
   version: BlogTemplateVersion;
@@ -13,9 +23,12 @@ export interface BlogTemplateDefinition {
 }
 
 export interface BlogTemplateSnapshot {
-  templateKey: BlogTemplateKey;
+  templateKey: StoredBlogTemplateKey;
   templateVersion: number;
   templateConfigJson: Record<string, unknown>;
+  customTemplateId: string | null;
+  customTemplateVersionId: string | null;
+  invalid?: boolean;
 }
 
 export interface BlogTemplatePublicDefinition {
@@ -111,38 +124,73 @@ export function getBlogTemplate(key: string, version?: number): BlogTemplateDefi
 export function resolveBlogTemplate(key: string = 'template_1'): BlogTemplateSnapshot {
   const template = getBlogTemplate(key);
   if (!template) throw new Error(`Unsupported Blog template: ${key}`);
-  return { templateKey: template.key, templateVersion: template.version, templateConfigJson: cloneConfig(template.config) };
+  return { templateKey: template.key, templateVersion: template.version, templateConfigJson: cloneConfig(template.config), customTemplateId: null, customTemplateVersionId: null };
 }
 
-export function normalizeStoredTemplate(version: {
+interface StoredTemplateFields {
   templateKey?: string | null;
   template_key?: string | null;
   templateVersion?: number | null;
   template_version?: number | null;
   templateConfigJson?: unknown;
   template_config_json?: unknown;
-}): BlogTemplateSnapshot {
+  customTemplateId?: string | number | null;
+  custom_template_id?: string | number | null;
+  customTemplateVersionId?: string | number | null;
+  custom_template_version_id?: string | number | null;
+}
+
+export function normalizeStoredTemplate(version: StoredTemplateFields): BlogTemplateSnapshot {
   const key = version.templateKey ?? version.template_key ?? 'template_1';
   const storedVersion = Number(version.templateVersion ?? version.template_version ?? 1);
-  const definition = getBlogTemplate(key, storedVersion);
   const config = parseStoredConfig(version.templateConfigJson ?? version.template_config_json);
+
+  if (key === INTERNAL_CUSTOM_TEMPLATE_KEY) {
+    const customTemplateId = version.customTemplateId ?? version.custom_template_id;
+    const customTemplateVersionId = version.customTemplateVersionId ?? version.custom_template_version_id;
+    if (config && customTemplateId && customTemplateVersionId) {
+      return {
+        templateKey: INTERNAL_CUSTOM_TEMPLATE_KEY,
+        templateVersion: storedVersion,
+        templateConfigJson: cloneConfig(config),
+        customTemplateId: String(customTemplateId),
+        customTemplateVersionId: String(customTemplateVersionId)
+      };
+    }
+    return {
+      templateKey: INTERNAL_CUSTOM_TEMPLATE_KEY,
+      templateVersion: storedVersion,
+      templateConfigJson: {},
+      customTemplateId: customTemplateId ? String(customTemplateId) : null,
+      customTemplateVersionId: customTemplateVersionId ? String(customTemplateVersionId) : null,
+      invalid: true
+    };
+  }
+
+  const definition = getBlogTemplate(key, storedVersion);
   if (definition && config) {
-    return { templateKey: definition.key, templateVersion: storedVersion, templateConfigJson: cloneConfig(config) };
+    return { templateKey: definition.key, templateVersion: storedVersion, templateConfigJson: cloneConfig(config), customTemplateId: null, customTemplateVersionId: null };
   }
   return resolveBlogTemplate('template_1');
 }
 
 export function templateMetadata(snapshot: BlogTemplateSnapshot) {
+  if (snapshot.templateKey === INTERNAL_CUSTOM_TEMPLATE_KEY) {
+    return { key: snapshot.templateKey, version: snapshot.templateVersion, name: 'Custom Template', layout: 'custom' as const, invalid: Boolean(snapshot.invalid) };
+  }
   const definition = getBlogTemplate(snapshot.templateKey, snapshot.templateVersion);
   return definition ? { key: definition.key, version: snapshot.templateVersion, name: definition.name, layout: definition.layout } : null;
 }
 
 export function isValidTemplateSnapshot(value: unknown): boolean {
-  const version = value as Record<string, unknown> | null;
+  const version = value as StoredTemplateFields | null;
   if (!version) return false;
   const key = String(version.templateKey ?? version.template_key ?? '');
   const templateVersion = Number(version.templateVersion ?? version.template_version ?? 0);
   const config = parseStoredConfig(version.templateConfigJson ?? version.template_config_json);
+  if (key === INTERNAL_CUSTOM_TEMPLATE_KEY) {
+    return Boolean(config && (version.customTemplateId ?? version.custom_template_id) && (version.customTemplateVersionId ?? version.custom_template_version_id));
+  }
   return Boolean(getBlogTemplate(key, templateVersion) && config);
 }
 

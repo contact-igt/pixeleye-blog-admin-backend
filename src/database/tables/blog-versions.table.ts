@@ -8,6 +8,17 @@ import {
 } from 'sequelize';
 import { tableNames } from '../table-names.js';
 
+function parseJsonColumn(raw: unknown): unknown {
+  if (typeof raw === 'string') {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
 export type BlogVersionType = 'draft' | 'published';
 export type BlogContentJson = unknown;
 export type BlogBlocksJson = unknown;
@@ -31,6 +42,8 @@ export class BlogVersion extends Model<
   declare templateKey: string;
   declare templateVersion: number;
   declare templateConfigJson: Record<string, unknown>;
+  declare customTemplateId: string | null;
+  declare customTemplateVersionId: string | null;
   declare blocksJson: BlogBlocksJson | null;
   declare createdBy: string | null;
   declare createdAt: CreationOptional<Date>;
@@ -53,7 +66,14 @@ export function initializeBlogVersionTable(sequelize: Sequelize): typeof BlogVer
       versionType: { type: DataTypes.STRING(40), allowNull: false, field: 'version_type' },
       title: { type: DataTypes.STRING(180), allowNull: false },
       excerpt: { type: DataTypes.TEXT, allowNull: true },
-      contentJson: { type: DataTypes.JSON, allowNull: true, field: 'content_json' },
+      contentJson: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        field: 'content_json',
+        get(this: BlogVersion) {
+          return parseJsonColumn(this.getDataValue('contentJson'));
+        }
+      },
       contentHtml: { type: DataTypes.TEXT('long'), allowNull: true, field: 'content_html' },
       seoTitle: { type: DataTypes.STRING(70), allowNull: true, field: 'seo_title' },
       seoDescription: { type: DataTypes.STRING(170), allowNull: true, field: 'seo_description' },
@@ -61,8 +81,38 @@ export function initializeBlogVersionTable(sequelize: Sequelize): typeof BlogVer
       featuredMediaId: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'featured_media_id', references: { model: tableNames.MEDIA_ASSETS, key: 'id' }, onDelete: 'SET NULL', onUpdate: 'CASCADE' },
       templateKey: { type: DataTypes.STRING(80), allowNull: false, field: 'template_key' },
       templateVersion: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, field: 'template_version' },
-      templateConfigJson: { type: DataTypes.JSON, allowNull: false, field: 'template_config_json' },
-      blocksJson: { type: DataTypes.JSON, allowNull: true, field: 'blocks_json' },
+      templateConfigJson: {
+        type: DataTypes.JSON,
+        allowNull: false,
+        field: 'template_config_json',
+        get(this: BlogVersion) {
+          return parseJsonColumn(this.getDataValue('templateConfigJson'));
+        }
+      },
+      customTemplateId: {
+        type: DataTypes.BIGINT.UNSIGNED,
+        allowNull: true,
+        field: 'custom_template_id',
+        references: { model: tableNames.CUSTOM_TEMPLATES, key: 'id' },
+        onDelete: 'RESTRICT',
+        onUpdate: 'CASCADE'
+      },
+      customTemplateVersionId: {
+        type: DataTypes.BIGINT.UNSIGNED,
+        allowNull: true,
+        field: 'custom_template_version_id',
+        references: { model: tableNames.CUSTOM_TEMPLATE_VERSIONS, key: 'id' },
+        onDelete: 'RESTRICT',
+        onUpdate: 'CASCADE'
+      },
+      blocksJson: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        field: 'blocks_json',
+        get(this: BlogVersion) {
+          return parseJsonColumn(this.getDataValue('blocksJson'));
+        }
+      },
       createdBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'created_by', references: { model: tableNames.ADMIN_USERS, key: 'id' }, onDelete: 'SET NULL', onUpdate: 'CASCADE' }
     },
     {
@@ -78,7 +128,9 @@ export function initializeBlogVersionTable(sequelize: Sequelize): typeof BlogVer
         { name: 'idx_blog_versions_template', fields: ['template_key', 'template_version'] },
         { name: 'idx_blog_versions_version_type', fields: ['version_type'] },
         { name: 'idx_blog_versions_version_number', fields: ['version_number'] },
-        { name: 'idx_blog_versions_created_at', fields: ['created_at'] }
+        { name: 'idx_blog_versions_created_at', fields: ['created_at'] },
+        { name: 'idx_blog_versions_custom_template_id', fields: ['custom_template_id'] },
+        { name: 'idx_blog_versions_custom_template_version_id', fields: ['custom_template_version_id'] }
       ]
     }
   );

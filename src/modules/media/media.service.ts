@@ -1,4 +1,4 @@
-﻿import { randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { Op, QueryTypes } from 'sequelize';
 import { sequelize } from '../../config/database.js';
 import { env } from '../../config/environment.js';
@@ -437,6 +437,26 @@ export function createMediaService(dependencies: MediaServiceDependencies = {}) 
         if (error instanceof ApiError) throw error;
         throw new ApiError(500, 'Media asset could not be saved', undefined, error);
       }
+    },
+
+    async updateMediaAsset(id: string, updates: { purpose?: MediaPurpose; alt_text?: string | null; original_file_name?: string }, actor: MediaActor) {
+      if (!/^\d+$/.test(id)) throw new ApiError(400, 'Media asset ID is invalid');
+      const asset = await repository.findByPk(id, { include: includeAdmins() });
+      if (!asset) throw new ApiError(404, 'Media asset was not found');
+      assertCanTrashOrRestore(actor, asset);
+
+      const fieldsToSave: Record<string, unknown> = {};
+      if (updates.purpose !== undefined) fieldsToSave.purpose = updates.purpose;
+      if (updates.alt_text !== undefined) fieldsToSave.altText = updates.alt_text;
+      if (updates.original_file_name !== undefined) {
+        fieldsToSave.originalFileName = updates.original_file_name;
+        fieldsToSave.originalFilename = updates.original_file_name;
+      }
+
+      if (Object.keys(fieldsToSave).length > 0) {
+        await asset.update(fieldsToSave);
+      }
+      return serializeMediaAsset((await repository.findByPk(id, { include: includeAdmins() })) || asset);
     },
 
     async moveMediaAssetToTrash(id: string, actor: MediaActor) {

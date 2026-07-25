@@ -5,6 +5,8 @@ import { AdminUser, initializeAdminUserTable } from '../tables/admin-users.table
 import { AuditLog, initializeAuditLogTable } from '../tables/audit-logs.table.js';
 import { BlogVersion, initializeBlogVersionTable } from '../tables/blog-versions.table.js';
 import { Blog, initializeBlogTable } from '../tables/blogs.table.js';
+import { CustomTemplateVersion, initializeCustomTemplateVersionTable } from '../tables/custom-template-versions.table.js';
+import { CustomTemplate, initializeCustomTemplateTable } from '../tables/custom-templates.table.js';
 import { MediaAsset, initializeMediaAssetTable } from '../tables/media-assets.table.js';
 
 export interface AuthModels {
@@ -22,9 +24,15 @@ export interface BlogModels {
   BlogVersion: typeof BlogVersion;
 }
 
+export interface CustomTemplateModels {
+  CustomTemplate: typeof CustomTemplate;
+  CustomTemplateVersion: typeof CustomTemplateVersion;
+}
+
 const initializedAuthSequelizeInstances = new WeakSet<Sequelize>();
 const initializedMediaSequelizeInstances = new WeakSet<Sequelize>();
 const initializedBlogSequelizeInstances = new WeakSet<Sequelize>();
+const initializedCustomTemplateSequelizeInstances = new WeakSet<Sequelize>();
 
 export function initializeAuthModels(sequelize: Sequelize = defaultSequelize): AuthModels {
   if (!initializedAuthSequelizeInstances.has(sequelize)) {
@@ -61,5 +69,18 @@ export function initializeBlogModels(sequelize: Sequelize = defaultSequelize): B
   return {
     Blog: sequelize.models.Blog as typeof Blog,
     BlogVersion: sequelize.models.BlogVersion as typeof BlogVersion
+  };
+}
+
+export function initializeCustomTemplateModels(sequelize: Sequelize = defaultSequelize): CustomTemplateModels {
+  if (!initializedCustomTemplateSequelizeInstances.has(sequelize)) {
+    initializeCustomTemplateTable(sequelize);
+    initializeCustomTemplateVersionTable(sequelize);
+    initializedCustomTemplateSequelizeInstances.add(sequelize);
+  }
+
+  return {
+    CustomTemplate: sequelize.models.CustomTemplate as typeof CustomTemplate,
+    CustomTemplateVersion: sequelize.models.CustomTemplateVersion as typeof CustomTemplateVersion
   };
 }

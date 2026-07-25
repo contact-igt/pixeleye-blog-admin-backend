@@ -1,10 +1,11 @@
 import type { Sequelize } from 'sequelize';
 import { sequelize as defaultSequelize } from '../../config/database.js';
-import { initializeAuthModels, initializeBlogModels, initializeMediaModels } from '../models/index.js';
+import { initializeAuthModels, initializeBlogModels, initializeCustomTemplateModels, initializeMediaModels } from '../models/index.js';
 
 const authAssociationsBySequelize = new WeakSet<Sequelize>();
 const mediaAssociationsBySequelize = new WeakSet<Sequelize>();
 const blogAssociationsBySequelize = new WeakSet<Sequelize>();
+const customTemplateAssociationsBySequelize = new WeakSet<Sequelize>();
 
 export function initializeAuthAssociations(sequelize: Sequelize = defaultSequelize) {
   if (authAssociationsBySequelize.has(sequelize)) {
@@ -119,4 +120,36 @@ export function initializeBlogAssociations(sequelize: Sequelize = defaultSequeli
 
   blogAssociationsBySequelize.add(sequelize);
   return { AdminUser, MediaAsset, Blog, BlogVersion };
+}
+
+export function initializeCustomTemplateAssociations(sequelize: Sequelize = defaultSequelize) {
+  if (customTemplateAssociationsBySequelize.has(sequelize)) {
+    return {
+      ...initializeAuthModels(sequelize),
+      ...initializeBlogModels(sequelize),
+      ...initializeCustomTemplateModels(sequelize)
+    };
+  }
+
+  const { AdminUser } = initializeAuthModels(sequelize);
+  const { BlogVersion } = initializeBlogModels(sequelize);
+  const { CustomTemplate, CustomTemplateVersion } = initializeCustomTemplateModels(sequelize);
+
+  CustomTemplate.belongsTo(AdminUser, { foreignKey: 'ownerId', as: 'owner', constraints: false });
+  CustomTemplate.belongsTo(AdminUser, { foreignKey: 'createdBy', as: 'creator', constraints: false });
+  CustomTemplate.belongsTo(AdminUser, { foreignKey: 'updatedBy', as: 'updater', constraints: false });
+  CustomTemplate.belongsTo(AdminUser, { foreignKey: 'activatedBy', as: 'activatedByAdmin', constraints: false });
+  CustomTemplate.belongsTo(AdminUser, { foreignKey: 'archivedBy', as: 'archivedByAdmin', constraints: false });
+  CustomTemplate.belongsTo(AdminUser, { foreignKey: 'restoredBy', as: 'restoredByAdmin', constraints: false });
+  CustomTemplate.belongsTo(CustomTemplateVersion, { foreignKey: 'currentVersionId', as: 'currentVersion', constraints: false });
+  CustomTemplate.hasMany(CustomTemplateVersion, { foreignKey: 'customTemplateId', as: 'versions', constraints: false });
+
+  CustomTemplateVersion.belongsTo(CustomTemplate, { foreignKey: 'customTemplateId', as: 'template', constraints: false });
+  CustomTemplateVersion.belongsTo(AdminUser, { foreignKey: 'createdBy', as: 'createdByAdmin', constraints: false });
+
+  BlogVersion.belongsTo(CustomTemplate, { foreignKey: 'customTemplateId', as: 'customTemplate', constraints: false });
+  BlogVersion.belongsTo(CustomTemplateVersion, { foreignKey: 'customTemplateVersionId', as: 'customTemplateVersion', constraints: false });
+
+  customTemplateAssociationsBySequelize.add(sequelize);
+  return { AdminUser, BlogVersion, CustomTemplate, CustomTemplateVersion };
 }

@@ -5,7 +5,9 @@ export const tableNames = {
   ADMIN_SESSIONS: 'admin_sessions',
   AUDIT_LOGS: 'audit_logs',
   BLOGS: 'blogs',
-  BLOG_VERSIONS: 'blog_versions'
+  BLOG_VERSIONS: 'blog_versions',
+  CUSTOM_TEMPLATES: 'custom_templates',
+  CUSTOM_TEMPLATE_VERSIONS: 'custom_template_versions'
 } as const;
 
 export type TableName = (typeof tableNames)[keyof typeof tableNames];

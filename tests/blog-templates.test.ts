@@ -51,7 +51,9 @@ describe('Blog system template registry', () => {
       { key: 'template_2', name: 'Template 2' }
     ]);
     expect(templateTwo.templateConfigJson.regions).toEqual(expect.arrayContaining(['hero', 'key_takeaways', 'article_content', 'table_of_contents', 'appointment_card', 'newsletter_card', 'faq', 'medical_disclaimer']));
-    expect(Object.keys(templateTwo).sort()).toEqual(['templateConfigJson', 'templateKey', 'templateVersion'].sort());
+    expect(Object.keys(templateTwo).sort()).toEqual(['customTemplateId', 'customTemplateVersionId', 'templateConfigJson', 'templateKey', 'templateVersion'].sort());
+    expect(templateTwo.customTemplateId).toBeNull();
+    expect(templateTwo.customTemplateVersionId).toBeNull();
   });
 
   it('defaults create validation to registry resolution and rejects unsupported or client-owned snapshot fields', () => {
@@ -94,7 +96,7 @@ describe('Blog template persistence', () => {
     await createBlogService().updateBlog('9', { template_key: 'template_2' }, { id: '1', role: 'editor' });
     expect(draft.update).toHaveBeenCalledWith(expect.objectContaining({ templateKey: 'template_2', templateVersion: 1 }), expect.anything());
     expect(published.templateKey).toBe('template_1');
-    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'BLOG_TEMPLATE_CHANGED', entityId: '9', metadata: expect.objectContaining({ old_template_key: 'template_1', new_template_key: 'template_2' }) }));
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'BLOG_TEMPLATE_CHANGED', entityId: '9', metadata: expect.objectContaining({ old_template_key: 'template_1', new_template_key: 'template_2' }) }), expect.anything());
   });
 
   it('publishes the exact Draft template snapshot without changing older Published versions', async () => {

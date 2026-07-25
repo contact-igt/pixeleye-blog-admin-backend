@@ -1,6 +1,6 @@
 import { z, ZodError } from 'zod';
 import { ApiError } from '../../utils/api-error.js';
-import { BLOG_BLOCKS_SCHEMA_VERSION, createDefaultBlogBlocks, type BlogBlocksDocument } from './blog-block.types.js';
+import { BLOG_BLOCKS_SCHEMA_VERSION, createDefaultBlogBlocks, type BlogBlocksDocument, type CustomBlockInstanceContent } from './blog-block.types.js';
 
 const text = (max: number) => z.string().trim().max(max);
 const mediaId = z.string().trim().regex(/^\d+$/, 'Media ID must be numeric').nullable();
@@ -12,6 +12,20 @@ const optionalHydratedMedia = {
 };
 
 const actionSchema = z.object({ label: text(80), url: safeUrl }).strict();
+
+const customInstanceContentSchema = z.discriminatedUnion('componentKey', [
+  z.object({ componentKey: z.literal('hero'), category: text(100), breadcrumb: z.array(text(80)).max(5), reviewer: z.object({ name: text(120), credentials: text(160) }).strict(), reading_time_minutes: z.number().int().min(1).max(240).nullable() }).strict(),
+  z.object({ componentKey: z.literal('key_takeaways'), enabled: z.boolean(), heading: text(120), items: z.array(text(240)).max(5) }).strict(),
+  z.object({ componentKey: z.literal('image_comparison'), enabled: z.boolean(), heading: text(120), items: z.array(z.object({ media_id: mediaId, title: text(120), description: text(500) }).strict()).max(6) }).strict(),
+  z.object({ componentKey: z.literal('numbered_list'), enabled: z.boolean(), heading: text(120), items: z.array(z.object({ title: text(120), description: text(500) }).strict()).max(10) }).strict(),
+  z.object({ componentKey: z.literal('expert_quote'), enabled: z.boolean(), quote: text(1000), name: text(120), role: text(160), media_id: mediaId, profile_url: safeUrl }).strict(),
+  z.object({ componentKey: z.literal('medical_cta'), enabled: z.boolean(), heading: text(180), description: text(500), primary: actionSchema, secondary: actionSchema }).strict(),
+  z.object({ componentKey: z.literal('faq'), enabled: z.boolean(), heading: text(160), items: z.array(z.object({ question: text(240), answer: text(1000) }).strict()).max(10) }).strict(),
+  z.object({ componentKey: z.literal('feedback'), enabled: z.boolean(), prompt: text(160) }).strict(),
+  z.object({ componentKey: z.literal('share'), enabled: z.boolean() }).strict(),
+  z.object({ componentKey: z.literal('medical_disclaimer'), enabled: z.literal(true, { error: 'Medical disclaimer cannot be disabled' }), text: text(1000) }).strict()
+]);
+
 const blogBlocksSchema = z.object({
   schema_version: z.literal(BLOG_BLOCKS_SCHEMA_VERSION),
   blocks: z.object({
@@ -25,7 +39,8 @@ const blogBlocksSchema = z.object({
     feedback: z.object({ enabled: z.boolean(), prompt: text(160) }).strict(),
     share: z.object({ enabled: z.boolean() }).strict(),
     disclaimer: z.object({ enabled: z.literal(true, { error: 'Medical disclaimer cannot be disabled' }), text: text(1000) }).strict()
-  }).strict()
+  }).strict(),
+  custom_instances: z.record(z.string(), customInstanceContentSchema).optional()
 }).strict();
 
 function blockErrors(error: ZodError) { return error.issues.map((issue) => ({ field: `blocks_json.${issue.path.join('.')}`, message: issue.message })); }
@@ -109,4 +124,70 @@ export function blogBlockCompletionErrors(document: BlogBlocksDocument): Array<{
 }
 export function isEnabledBlogBlockComplete(document: BlogBlocksDocument, blockKey: keyof BlogBlocksDocument['blocks']): boolean {
   return !blogBlockCompletionErrors(document).some((error) => error.field.startsWith(`blocks_json.blocks.${blockKey}`));
+}
+
+export function collectCustomInstanceMediaIds(document: BlogBlocksDocument): string[] {
+  const instances = Object.values(document.custom_instances ?? {});
+  const ids = instances.flatMap((instance) => {
+    if (instance.componentKey === 'image_comparison') return instance.items.map((item) => item.media_id);
+    if (instance.componentKey === 'expert_quote') return [instance.media_id];
+    return [];
+  });
+  return [...new Set(ids.filter((id): id is string => Boolean(id)))];
+}
+
+function customInstanceErrors(blockId: string, instance: CustomBlockInstanceContent): Array<{ field: string; message: string }> {
+  const errors: Array<{ field: string; message: string }> = [];
+  const add = (field: string, message: string) => errors.push({ field: `blocks_json.custom_instances.${blockId}.${field}`, message });
+  switch (instance.componentKey) {
+    case 'medical_disclaimer':
+      if (!required(instance.text)) add('text', 'Medical disclaimer text is required.');
+      break;
+    case 'key_takeaways':
+      if (!instance.enabled) break;
+      if (!required(instance.heading)) add('heading', 'Key Takeaways heading is required.');
+      if (instance.items.length < 1) add('items', 'Add at least one Key Takeaway.');
+      instance.items.forEach((item, index) => { if (!required(item)) add(`items.${index}`, 'Key Takeaway text is required.'); });
+      break;
+    case 'image_comparison':
+      if (!instance.enabled) break;
+      if (!required(instance.heading)) add('heading', 'Image Comparison heading is required.');
+      if (instance.items.length < 1) add('items', 'Add at least one comparison card.');
+      instance.items.forEach((item, index) => { if (!item.media_id) add(`items.${index}.media_id`, 'Comparison image is required.'); if (!required(item.title)) add(`items.${index}.title`, 'Comparison title is required.'); if (!required(item.description)) add(`items.${index}.description`, 'Comparison description is required.'); });
+      break;
+    case 'numbered_list':
+      if (!instance.enabled) break;
+      if (!required(instance.heading)) add('heading', 'Numbered List heading is required.');
+      if (instance.items.length < 1) add('items', 'Add at least one numbered item.');
+      instance.items.forEach((item, index) => { if (!required(item.title)) add(`items.${index}.title`, 'Numbered item title is required.'); if (!required(item.description)) add(`items.${index}.description`, 'Numbered item description is required.'); });
+      break;
+    case 'expert_quote':
+      if (!instance.enabled) break;
+      if (!required(instance.quote)) add('quote', 'Expert quote is required.');
+      if (!required(instance.name)) add('name', 'Expert name is required.');
+      if (!required(instance.role)) add('role', 'Expert role is required.');
+      break;
+    case 'medical_cta': {
+      if (!instance.enabled) break;
+      if (!required(instance.heading)) add('heading', 'Medical CTA heading is required.');
+      if (!required(instance.description)) add('description', 'Medical CTA description is required.');
+      const actions = [instance.primary, instance.secondary];
+      actions.forEach((action, index) => { if (Boolean(action.label) !== Boolean(action.url)) add(index === 0 ? 'primary' : 'secondary', 'CTA label and URL must be supplied together.'); });
+      if (!actions.some(completeAction)) add('primary', 'Add at least one complete CTA action.');
+      break;
+    }
+    case 'faq':
+      if (!instance.enabled) break;
+      if (!required(instance.heading)) add('heading', 'FAQ heading is required.');
+      if (instance.items.length < 1) add('items', 'Add at least one FAQ item.');
+      instance.items.forEach((item, index) => { if (!required(item.question)) add(`items.${index}.question`, 'FAQ question is required.'); if (!required(item.answer)) add(`items.${index}.answer`, 'FAQ answer is required.'); });
+      break;
+    default:
+      break;
+  }
+  return errors;
+}
+
+export function customInstanceCompletionErrors(document: BlogBlocksDocument): Array<{ field: string; message: string }> {
+  return Object.entries(document.custom_instances ?? {}).flatMap(([blockId, instance]) => customInstanceErrors(blockId, instance));
 }
