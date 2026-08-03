@@ -6,7 +6,7 @@ export const corsOptions: CorsOptions = {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
-  exposedHeaders: ['X-Request-ID'],
+  exposedHeaders: ['X-Request-ID', 'Content-Disposition'],
   origin(origin, callback) {
     if (!origin || env.corsOrigins.includes(origin)) {
       callback(null, true);
@@ -15,4 +15,3 @@ export const corsOptions: CorsOptions = {
     callback(new ApiError(403, 'Origin is not allowed by CORS policy'));
   }
 };
-
