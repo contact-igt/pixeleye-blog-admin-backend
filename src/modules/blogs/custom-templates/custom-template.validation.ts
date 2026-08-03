@@ -8,6 +8,7 @@ import {
   CUSTOM_TEMPLATE_SCHEMA_VERSION,
   type CustomTemplateLayoutConfigV1
 } from './custom-template.types.js';
+import { normalizeCustomTemplateSettings } from './custom-template.settings.js';
 
 export interface CustomTemplateValidationError {
   path: string;
@@ -24,7 +25,8 @@ export function validateCustomTemplateLayout(
     ]);
   }
 
-  const configObj = rawConfig as Record<string, unknown>;
+  const normalizedConfig = normalizeCustomTemplateSettings(rawConfig);
+  const configObj = normalizedConfig as Record<string, unknown>;
   if (configObj.schemaVersion !== CUSTOM_TEMPLATE_SCHEMA_VERSION) {
     throw new ApiError(422, 'Custom template schema version is not supported.', [
       {
@@ -36,7 +38,7 @@ export function validateCustomTemplateLayout(
 
   let parsed: CustomTemplateLayoutConfigV1;
   try {
-    parsed = customTemplateLayoutConfigV1Schema.parse(rawConfig) as CustomTemplateLayoutConfigV1;
+    parsed = customTemplateLayoutConfigV1Schema.parse(normalizedConfig) as CustomTemplateLayoutConfigV1;
   } catch (error) {
     if (error instanceof ZodError) {
       const errors = error.issues.map((issue) => ({
@@ -52,6 +54,7 @@ export function validateCustomTemplateLayout(
   const sectionIds = new Set<string>();
   const slotIds = new Set<string>();
   const componentIds = new Set<string>();
+  const blockIdPaths = new Map<string, string>();
   let totalComponents = 0;
 
   // Expected slots per layout
@@ -120,26 +123,39 @@ export function validateCustomTemplateLayout(
         }
 
         // Block-reference rules
-        if (def.category === 'content') {
-          if (!comp.blockId) {
+        if (def.requiresBlockId) {
+          const blockId = (comp as { blockId?: string }).blockId;
+          if (!blockId) {
             errors.push({
               path: `${compPath}.blockId`,
               message: `Content component '${comp.componentKey}' requires a blockId reference.`
             });
-          } else if (blocksDoc && def.requiredBlockKey !== 'article_content') {
-            const reqKey = def.requiredBlockKey as keyof typeof blocksDoc.blocks;
-            const blockExists = Boolean(
-              blocksDoc.custom_instances?.[comp.blockId] || (reqKey && blocksDoc.blocks?.[reqKey])
-            );
-            if (!blockExists) {
-              errors.push({
-                path: `${compPath}.blockId`,
-                message: `Referenced block '${comp.blockId}' was not found in blocks_json.custom_instances.`
-              });
+          } else {
+            if (comp.componentKey === 'rich_article_content' && blockId !== 'article_content') {
+              errors.push({ path: `${compPath}.blockId`, message: "Rich Article Content must use the 'article_content' blockId." });
+            }
+            if (comp.componentKey !== 'rich_article_content' && blockId === 'article_content') {
+              errors.push({ path: `${compPath}.blockId`, message: "The 'article_content' blockId is reserved for Rich Article Content." });
+            }
+            if (blockId !== 'article_content') {
+              const firstPath = blockIdPaths.get(blockId);
+              if (firstPath) {
+                errors.push({ path: `${compPath}.blockId`, message: `Duplicate blockId '${blockId}'. First used at ${firstPath}.` });
+              } else {
+                blockIdPaths.set(blockId, `${compPath}.blockId`);
+              }
+            }
+            const placementEnabled = section.enabled !== false && comp.enabled !== false;
+            if (blocksDoc && placementEnabled && comp.componentKey !== 'rich_article_content') {
+              const instance = blocksDoc.custom_instances?.[blockId];
+              if (!instance) {
+                errors.push({ path: `${compPath}.blockId`, message: `Referenced block '${blockId}' was not found in blocks_json.custom_instances.` });
+              } else if (instance.componentKey !== comp.componentKey) {
+                errors.push({ path: `${compPath}.blockId`, message: `Referenced block '${blockId}' contains '${instance.componentKey}', not '${comp.componentKey}'.` });
+              }
             }
           }
         } else {
-          // System & structural components MUST NOT have blockId
           const rawInstance = comp as Record<string, unknown>;
           if (rawInstance.blockId !== undefined && rawInstance.blockId !== null) {
             errors.push({

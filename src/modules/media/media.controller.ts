@@ -4,6 +4,11 @@ import { ApiError } from '../../utils/api-error.js';
 import { createMediaService, type MediaService } from './media.service.js';
 import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
 import { mediaUploadBodySchema, mediaUpdateBodySchema } from './media.validation.js';
+import { logger } from '../../config/logger.js';
+
+function disablePrivateResponseCaching(response: Response): void {
+  response.setHeader('Cache-Control', 'private, no-store, max-age=0');
+}
 
 function currentActor(request: Request) {
   if (!request.authenticatedAdmin) throw new ApiError(401, 'Authentication is required');
@@ -13,11 +18,15 @@ function currentActor(request: Request) {
   };
 }
 
-export function createMediaController(service: MediaService = createMediaService()) {
+export function createMediaController(
+  service: MediaService = createMediaService(),
+  auditWriter: typeof writeAuthAuditLog = writeAuthAuditLog
+) {
   return {
     async list(request: Request, response: Response, next: NextFunction) {
       try {
         if (!request.authenticatedAdmin) throw new ApiError(401, 'Authentication is required');
+        disablePrivateResponseCaching(response);
         const result = await service.listMediaAssets(request.query);
         return sendSuccess(response, 'Media assets fetched', result);
       } catch (error) {
@@ -28,6 +37,7 @@ export function createMediaController(service: MediaService = createMediaService
     async trashList(request: Request, response: Response, next: NextFunction) {
       try {
         if (!request.authenticatedAdmin) throw new ApiError(401, 'Authentication is required');
+        disablePrivateResponseCaching(response);
         const result = await service.listTrashedMediaAssets(request.query);
         return sendSuccess(response, 'Media trash fetched', result);
       } catch (error) {
@@ -38,6 +48,7 @@ export function createMediaController(service: MediaService = createMediaService
     async detail(request: Request, response: Response, next: NextFunction) {
       try {
         if (!request.authenticatedAdmin) throw new ApiError(401, 'Authentication is required');
+        disablePrivateResponseCaching(response);
         const asset = await service.getMediaAsset(String(request.params.id ?? ''));
         return sendSuccess(response, 'Media asset fetched', asset);
       } catch (error) {
@@ -48,20 +59,26 @@ export function createMediaController(service: MediaService = createMediaService
     async upload(request: Request, response: Response, next: NextFunction) {
       try {
         if (!request.authenticatedAdmin) throw new ApiError(401, 'Authentication is required');
+        disablePrivateResponseCaching(response);
         const body = mediaUploadBodySchema.parse(request.body);
         const asset = await service.uploadMediaAsset({
           file: request.file,
           body: { ...body, uploaded_by: request.authenticatedAdmin.id }
         });
-        await writeAuthAuditLog({
+        await auditWriter({
           action: 'MEDIA_ASSET_UPLOADED',
           adminUserId: request.authenticatedAdmin.id,
           requestId: request.requestId,
           ip: request.ip,
           userAgent: request.header('user-agent') ?? undefined,
           metadata: { media_asset_id: asset.id, purpose: asset.purpose }
+        }).catch((auditError) => {
+          logger.error(
+            { err: auditError, request_id: request.requestId, media_asset_id: asset.id },
+            'Media upload succeeded but audit logging failed'
+          );
         });
-        return sendSuccess(response, 'Media asset uploaded', asset, 201);
+        return sendSuccess(response, 'Media asset uploaded successfully.', asset, 201);
       } catch (error) {
         next(error);
       }

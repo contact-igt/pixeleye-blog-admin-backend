@@ -26,6 +26,10 @@ export class NewsletterSubscriber extends Model<InferAttributes<NewsletterSubscr
   declare consentAt: Date | null;
   declare verificationSentAt: Date | null;
   declare lastVerificationSentAt: Date | null;
+  declare resubscriptionTokenHash: string | null;
+  declare resubscriptionExpiresAt: Date | null;
+  declare resubscriptionRequestedAt: Date | null;
+  declare subscribedAt: Date | null;
   declare deletedAt: Date | null;
   declare deletedBy: string | null;
   declare deletionReason: string | null;
@@ -60,6 +64,10 @@ export function initializeNewsletterSubscriberTable(sequelize: Sequelize): typeo
       consentAt: { type: DataTypes.DATE, allowNull: true, field: 'consent_at' },
       verificationSentAt: { type: DataTypes.DATE, allowNull: true, field: 'verification_sent_at' },
       lastVerificationSentAt: { type: DataTypes.DATE, allowNull: true, field: 'last_verification_sent_at' },
+      resubscriptionTokenHash: { type: DataTypes.STRING(255), allowNull: true, field: 'resubscription_token_hash' },
+      resubscriptionExpiresAt: { type: DataTypes.DATE(3), allowNull: true, field: 'resubscription_expires_at' },
+      resubscriptionRequestedAt: { type: DataTypes.DATE(3), allowNull: true, field: 'resubscription_requested_at' },
+      subscribedAt: { type: DataTypes.DATE(3), allowNull: true, field: 'subscribed_at' },
       deletedAt: { type: DataTypes.DATE, allowNull: true, field: 'deleted_at' },
       deletedBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'deleted_by' },
       deletionReason: { type: DataTypes.STRING(255), allowNull: true, field: 'deletion_reason' },

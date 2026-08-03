@@ -1,11 +1,21 @@
+import {
+  EMAIL_MAIL_FROM_NAME,
+  EMAIL_PUBLIC_WEBSITE_URL,
+  absoluteWebsiteUrl,
+  emailBrand,
+  escapeEmailHtml,
+  escapeEmailMultilineText,
+  renderBrandedEmailShell,
+  renderEmailButton,
+  renderEmailTestBanner,
+  safeEmailHttpUrl
+} from './email-theme.js';
+
 export interface EmailTemplate {
   subject: string;
   htmlBody: string;
   textBody: string;
 }
-
-const PUBLIC_WEBSITE_URL = process.env.PUBLIC_WEBSITE_URL || 'https://pixeleye.in';
-const MAIL_FROM_NAME = process.env.MAIL_FROM_NAME || 'Pixel Eye Blog';
 
 export function generateVerificationEmail(
   verificationUrl: string,
@@ -13,77 +23,73 @@ export function generateVerificationEmail(
 ): EmailTemplate {
   const subject = 'Confirm Your Subscription to Pixel Eye Blog';
   const expiryHours = parseInt(process.env.NEWSLETTER_VERIFICATION_TOKEN_TTL_HOURS || '24', 10);
+  const safeVerificationUrl = safeEmailHttpUrl(verificationUrl, EMAIL_PUBLIC_WEBSITE_URL) as string;
+  const previewText = `Confirm your Pixel Eye newsletter subscription. This link expires in ${expiryHours} hours.`;
 
-  const htmlBody = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; border-radius: 8px 8px 0 0; text-align: center; }
-    .content { background: #f9f9f9; padding: 30px 20px; border-radius: 0 0 8px 8px; }
-    .button { display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-    .footer { font-size: 12px; color: #999; text-align: center; margin-top: 30px; }
-    .link-fallback { word-break: break-all; font-size: 12px; color: #667eea; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>Confirm Your Subscription</h1>
-    </div>
-    <div class="content">
-      <p>Hello,</p>
-      <p>Thank you for your interest in ${MAIL_FROM_NAME}! To complete your subscription, please confirm your email address by clicking the button below:</p>
-      <a href="${verificationUrl}" class="button">Confirm Subscription</a>
-      <p>Or copy and paste this link in your browser:</p>
-      <p class="link-fallback">${verificationUrl}</p>
-      <p><strong>This link will expire in ${expiryHours} hours.</strong></p>
-      <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-      <p style="font-size: 13px; color: #666;">
-        We respect your privacy. You'll only receive emails when we publish new articles. You can unsubscribe anytime by clicking the unsubscribe link in any email we send.
-      </p>
-      <p style="font-size: 13px; color: #666;">
-        If you didn't sign up for this newsletter, you can safely ignore this email.
-      </p>
-    </div>
-    <div class="footer">
-      <p>${MAIL_FROM_NAME}</p>
-      <p>${PUBLIC_WEBSITE_URL}</p>
-    </div>
-  </div>
-</body>
-</html>
+  const contentHtml = `
+    <p style="color: ${emailBrand.gold}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; line-height: 18px; margin: 0 0 12px; text-align: center; text-transform: uppercase;">
+      Pixel Eye Newsletter
+    </p>
+    <h1 class="email-title" style="color: ${emailBrand.heading}; font-family: 'Bricolage Grotesque', 'Segoe UI', Arial, sans-serif; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; line-height: 41px; margin: 0 0 18px; text-align: center;">
+      Confirm your subscription
+    </h1>
+    <p style="color: ${emailBrand.body}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 16px; line-height: 26px; margin: 0 0 28px; text-align: center;">
+      Thank you for joining ${escapeEmailHtml(EMAIL_MAIL_FROM_NAME)}. Confirm your email address to receive trusted eye-health articles and updates.
+    </p>
+    ${renderEmailButton('Confirm Subscription', safeVerificationUrl)}
+    <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="${emailBrand.lightBlue}" style="background-color: ${emailBrand.lightBlue}; border: 1px solid ${emailBrand.border}; border-radius: 12px; margin: 30px 0 0;">
+      <tr>
+        <td style="padding: 18px 20px;">
+          <p style="color: ${emailBrand.heading}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; font-weight: 700; line-height: 21px; margin: 0 0 4px;">Link expires in ${expiryHours} hours</p>
+          <p style="color: ${emailBrand.body}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; line-height: 20px; margin: 0;">For your security, use the confirmation button before the link expires.</p>
+        </td>
+      </tr>
+    </table>
+    <p style="color: ${emailBrand.muted}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 24px 0 7px;">If the button does not work, copy and paste this link into your browser:</p>
+    <p style="font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 0; overflow-wrap: anywhere; word-break: break-all;">
+      <a href="${escapeEmailHtml(safeVerificationUrl)}" style="color: ${emailBrand.blue}; text-decoration: underline;">${escapeEmailHtml(safeVerificationUrl)}</a>
+    </p>
+    <div style="border-top: 1px solid ${emailBrand.border}; margin: 30px 0 20px;"></div>
+    <p style="color: ${emailBrand.muted}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 0 0 8px; text-align: center;">You will only receive emails when we publish new articles, and you can unsubscribe at any time.</p>
+    <p style="color: ${emailBrand.muted}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 0; text-align: center;">If you did not request this subscription, you can safely ignore this email.</p>
   `.trim();
 
+  const htmlBody = renderBrandedEmailShell({ documentTitle: subject, previewText, contentHtml });
   const textBody = `
-Confirm Your Subscription to ${MAIL_FROM_NAME}
+Confirm Your Subscription to ${EMAIL_MAIL_FROM_NAME}
 
-Hello,
+Thank you for joining ${EMAIL_MAIL_FROM_NAME}.
 
-Thank you for your interest in ${MAIL_FROM_NAME}! To complete your subscription, please confirm your email address by visiting:
+Confirm your email address by visiting:
+${safeVerificationUrl}
 
-${verificationUrl}
+This link expires in ${expiryHours} hours.
 
-This link will expire in ${expiryHours} hours.
+You will only receive emails when we publish new articles, and you can unsubscribe at any time.
 
----
+If you did not request this subscription, you can safely ignore this email.
 
-We respect your privacy. You'll only receive emails when we publish new articles. You can unsubscribe anytime by clicking the unsubscribe link in any email we send.
-
-If you didn't sign up for this newsletter, you can safely ignore this email.
-
-${MAIL_FROM_NAME}
-${PUBLIC_WEBSITE_URL}
+${EMAIL_MAIL_FROM_NAME}
+${EMAIL_PUBLIC_WEBSITE_URL}
   `.trim();
 
   return { subject, htmlBody, textBody };
 }
 
+export function generateResubscriptionEmail(resubscriptionUrl: string, email: string): EmailTemplate {
+  const base = generateVerificationEmail(resubscriptionUrl, email);
+  return {
+    subject: 'Confirm Your New Subscription Request to Pixel Eye Blog',
+    htmlBody: base.htmlBody
+      .replace(/Confirm your subscription/gi, 'Confirm your new subscription request')
+      .replace(/Thank you for joining/gi, 'You previously unsubscribed. If you want to rejoin'),
+    textBody: `You previously unsubscribed from Pixel Eye Blog. You will remain unsubscribed unless you personally confirm this new request.\n\nConfirm your new subscription request:\n${resubscriptionUrl}\n\nIf you did not request this, ignore this email.`
+  };
+}
+
 export interface CampaignEmailParams {
+  campaignSubject: string;
+  previewText?: string | null;
   blogTitle: string;
   blogExcerpt: string;
   blogSlug: string;
@@ -94,84 +100,114 @@ export interface CampaignEmailParams {
 }
 
 export function generateCampaignEmail(params: CampaignEmailParams): EmailTemplate {
-  const testLabel = params.isTest ? '[TEST] ' : '';
-  const subject = `${testLabel}${params.blogTitle}`;
+  const subject = `${params.isTest ? '[TEST] ' : ''}${params.campaignSubject}`;
+  const safeBlogUrl = safeEmailHttpUrl(params.blogUrl, EMAIL_PUBLIC_WEBSITE_URL) as string;
+  const safeFeaturedImageUrl = safeEmailHttpUrl(params.featuredImageUrl);
+  const safeUnsubscribeUrl = params.isTest
+    ? undefined
+    : safeEmailHttpUrl(params.unsubscribeUrl, absoluteWebsiteUrl('/newsletter/unsubscribe'));
+  const previewText = params.previewText?.trim() || `New from Pixel Eye: ${params.blogTitle}`;
 
-  const htmlBody = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }
-    .content { background: #f9f9f9; padding: 30px 20px; border-radius: 0 0 8px 8px; }
-    .featured-image { max-width: 100%; height: auto; border-radius: 4px; margin: 20px 0; }
-    .excerpt { font-size: 16px; color: #555; margin: 20px 0; font-style: italic; }
-    .button { display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-    .footer { font-size: 12px; color: #999; text-align: center; margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; }
-    .test-badge { background: #ff9800; color: white; padding: 4px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    ${
-      params.isTest
-        ? '<div style="background: #ff9800; color: white; padding: 10px; text-align: center; border-radius: 4px; margin-bottom: 20px;"><strong>TEST EMAIL</strong> - This is a test and will not be sent to all subscribers</div>'
-        : ''
-    }
-    <div class="header">
-      <h1>${params.blogTitle}</h1>
-      ${params.isTest ? '<p style="margin: 10px 0 0 0;">Test Email</p>' : ''}
-    </div>
-    <div class="content">
-      ${
-        params.featuredImageUrl
-          ? `<img src="${params.featuredImageUrl}" alt="${params.blogTitle}" class="featured-image">`
-          : ''
-      }
-      <p class="excerpt">${params.blogExcerpt}</p>
-      <a href="${params.blogUrl}" class="button">Read Full Article</a>
-      <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
-      <p style="font-size: 13px; color: #666;">
-        This email was sent to you because you subscribed to our newsletter.
-        ${
-          params.isTest
-            ? '<strong>As a test email, the unsubscribe link below is not functional.</strong>'
-            : `You can <a href="${params.unsubscribeUrl}" style="color: #667eea;">unsubscribe here</a> if you no longer wish to receive our emails.`
-        }
-      </p>
-    </div>
-    <div class="footer">
-      <p>${MAIL_FROM_NAME}</p>
-      <p>${PUBLIC_WEBSITE_URL}</p>
-    </div>
-  </div>
-</body>
-</html>
+  const featuredImageHtml = safeFeaturedImageUrl
+    ? `
+      <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" style="margin: 0 0 28px;">
+        <tr>
+          <td><img class="featured-image" src="${escapeEmailHtml(safeFeaturedImageUrl)}" width="508" alt="${escapeEmailHtml(params.blogTitle)}" style="border-radius: 14px; height: auto; max-width: 508px; object-fit: cover; width: 100%;"></td>
+        </tr>
+      </table>
+    `.trim()
+    : '';
+
+  const subscriptionHtml = params.isTest
+    ? '<strong>This is a test email. The unsubscribe action is intentionally disabled.</strong>'
+    : `You can <a href="${escapeEmailHtml(safeUnsubscribeUrl as string)}" style="color: ${emailBrand.blue}; font-weight: 700; text-decoration: underline;">unsubscribe here</a> at any time.`;
+
+  const contentHtml = `
+    ${params.isTest ? renderEmailTestBanner('Test email — not sent to subscribers') : ''}
+    <p style="color: ${emailBrand.gold}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; line-height: 18px; margin: 0 0 12px; text-align: center; text-transform: uppercase;">Latest Eye Health Article</p>
+    ${featuredImageHtml}
+    <h1 class="email-title" style="color: ${emailBrand.heading}; font-family: 'Bricolage Grotesque', 'Segoe UI', Arial, sans-serif; font-size: 34px; font-weight: 700; letter-spacing: -0.5px; line-height: 42px; margin: 0 0 18px; text-align: center;">${escapeEmailHtml(params.blogTitle)}</h1>
+    <p style="color: ${emailBrand.body}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 16px; line-height: 27px; margin: 0 0 28px; text-align: center;">${escapeEmailMultilineText(params.blogExcerpt)}</p>
+    ${renderEmailButton('Read Full Article', safeBlogUrl)}
+    <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="${emailBrand.lightBlue}" style="background-color: ${emailBrand.lightBlue}; border: 1px solid ${emailBrand.border}; border-radius: 12px; margin: 30px 0 0;">
+      <tr>
+        <td style="padding: 18px 20px;">
+          <p style="color: ${emailBrand.heading}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; font-weight: 700; line-height: 20px; margin: 0 0 4px;">A note about our health information</p>
+          <p style="color: ${emailBrand.body}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 0;">This article is for general education and does not replace an examination or advice from a qualified eye-care professional.</p>
+        </td>
+      </tr>
+    </table>
+    <div style="border-top: 1px solid ${emailBrand.border}; margin: 30px 0 20px;"></div>
+    <p style="color: ${emailBrand.muted}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 0; text-align: center;">This email was sent because you subscribed to the Pixel Eye newsletter. ${subscriptionHtml}</p>
   `.trim();
 
+  const htmlBody = renderBrandedEmailShell({ documentTitle: subject, previewText, contentHtml });
   const textBody = `
-${params.isTest ? '[TEST EMAIL]\n\n' : ''}
+${params.isTest ? '[TEST EMAIL — NOT SENT TO SUBSCRIBERS]\n\n' : ''}${previewText}
+
 ${params.blogTitle}
 
 ${params.blogExcerpt}
 
 Read the full article:
-${params.blogUrl}
+${safeBlogUrl}
+
+This article is for general education and does not replace an examination or advice from a qualified eye-care professional.
 
 ${
   params.isTest
-    ? '\nThis is a test email and has not been sent to subscribers.'
-    : `\nUnsubscribe: ${params.unsubscribeUrl}`
+    ? 'This is a test email. The unsubscribe action is intentionally disabled.'
+    : `You received this email because you subscribed to the Pixel Eye newsletter.\nUnsubscribe: ${safeUnsubscribeUrl}`
 }
 
----
+${EMAIL_MAIL_FROM_NAME}
+${EMAIL_PUBLIC_WEBSITE_URL}
+  `.trim();
 
-${MAIL_FROM_NAME}
-${PUBLIC_WEBSITE_URL}
+  return { subject, htmlBody, textBody };
+}
+
+export interface SmtpDiagnosticEmailParams {
+  timestamp?: Date;
+}
+
+export function generateSmtpDiagnosticEmail(
+  params: SmtpDiagnosticEmailParams = {}
+): EmailTemplate {
+  const timestamp = (params.timestamp || new Date()).toISOString();
+  const subject = '[TEST] Pixel Eye email delivery check';
+  const previewText = 'Your Pixel Eye SMTP configuration delivered this diagnostic email successfully.';
+
+  const contentHtml = `
+    ${renderEmailTestBanner('SMTP diagnostic email')}
+    <p style="color: ${emailBrand.gold}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; font-weight: 700; letter-spacing: 1.2px; line-height: 18px; margin: 0 0 12px; text-align: center; text-transform: uppercase;">Delivery Check</p>
+    <h1 class="email-title" style="color: ${emailBrand.heading}; font-family: 'Bricolage Grotesque', 'Segoe UI', Arial, sans-serif; font-size: 32px; font-weight: 700; line-height: 39px; margin: 0 0 18px; text-align: center;">Email delivery is working</h1>
+    <p style="color: ${emailBrand.body}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 16px; line-height: 26px; margin: 0 0 26px; text-align: center;">The backend connected to the configured mail provider and delivered this message successfully.</p>
+    <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" bgcolor="${emailBrand.lightBlue}" style="background-color: ${emailBrand.lightBlue}; border: 1px solid ${emailBrand.border}; border-radius: 12px;">
+      <tr>
+        <td style="padding: 18px 20px;">
+          <p style="color: ${emailBrand.muted}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; line-height: 17px; margin: 0 0 4px; text-transform: uppercase;">Generated at</p>
+          <p style="color: ${emailBrand.heading}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 14px; font-weight: 700; line-height: 21px; margin: 0;">${escapeEmailHtml(timestamp)}</p>
+        </td>
+      </tr>
+    </table>
+    <p style="color: ${emailBrand.muted}; font-family: 'Segoe UI', Arial, sans-serif; font-size: 12px; line-height: 19px; margin: 24px 0 0; text-align: center;">No subscriber confirmation or unsubscribe action is attached to this diagnostic message.</p>
+  `.trim();
+
+  const htmlBody = renderBrandedEmailShell({ documentTitle: subject, previewText, contentHtml });
+  const textBody = `
+Pixel Eye email delivery check
+
+Email delivery is working.
+
+The backend connected to the configured mail provider and delivered this message successfully.
+
+Generated at: ${timestamp}
+
+No subscriber confirmation or unsubscribe action is attached to this diagnostic message.
+
+${EMAIL_MAIL_FROM_NAME}
+${EMAIL_PUBLIC_WEBSITE_URL}
   `.trim();
 
   return { subject, htmlBody, textBody };

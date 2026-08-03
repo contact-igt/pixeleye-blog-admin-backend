@@ -1,4 +1,4 @@
-﻿import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { ApiError } from '../../utils/api-error.js';
 import { sendSuccess } from '../../utils/api-response.js';
 import { createBlogService, type BlogService } from './blog.service.js';
@@ -17,6 +17,7 @@ export function createBlogController(service: BlogService = createBlogService())
     async detail(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog fetched', await service.getBlog(String(request.params.id ?? ''), actor(request))); } catch (error) { next(error); } },
     async checklist(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Publish checklist fetched', await service.getPublishChecklist(String(request.params.id ?? ''), actor(request))); } catch (error) { next(error); } },
     async update(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog updated', await service.updateBlog(String(request.params.id ?? ''), request.body, actor(request))); } catch (error) { next(error); } },
+    async upgradeCustomTemplate(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog Custom Template upgraded', await service.upgradeCustomTemplateVersion(String(request.params.id ?? ''), actor(request))); } catch (error) { next(error); } },
     async publish(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog published', await service.publishBlog(String(request.params.id ?? ''), actor(request))); } catch (error) { next(error); } },
     async unpublish(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog unpublished', await service.unpublishBlog(String(request.params.id ?? ''), actor(request))); } catch (error) { next(error); } },
     async trash(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog moved to trash', await service.moveBlogToTrash(String(request.params.id ?? ''), actor(request))); } catch (error) { next(error); } },

@@ -101,14 +101,30 @@ const environmentSchema = z.object({
   SMTP_SECURE: booleanString,
   SMTP_USER: z.string().default(''),
   SMTP_PASSWORD: z.string().default(''),
+  SMTP_CONNECTION_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(10_000),
+  SMTP_GREETING_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(10_000),
+  SMTP_SOCKET_TIMEOUT_MS: z.coerce.number().int().positive().max(300_000).default(20_000),
   MAIL_FROM_NAME: z.string().default('Pixel Eye Hospitals'),
   MAIL_FROM_EMAIL: z.union([z.literal(''), z.string().email()]).default(''),
   FEEDBACK_VISITOR_HASH_SECRET: z.string().default('default-feedback-secret-change-in-prod'),
-  NEWSLETTER_HASH_SECRET: z.string().default('default-newsletter-secret-change-in-prod'),
+  // A local-dev-only default so unconfigured dev/test environments still
+  // boot. Minimum-strength and placeholder rejection are enforced only for
+  // NODE_ENV === 'production' (below, alongside the other
+  // requiredProductionKeys) — not schema-wide — so this default itself,
+  // and any short value a developer sets locally, never blocks local/dev/test
+  // startup, only a production one.
+  NEWSLETTER_HASH_SECRET: z.string().default('local-development-newsletter-secret-not-for-prod'),
   NEWSLETTER_VERIFICATION_TOKEN_TTL_HOURS: z.coerce.number().int().positive().max(720).default(24),
   NEWSLETTER_VERIFICATION_RESEND_COOLDOWN_MINUTES: z.coerce.number().int().positive().max(1440).default(5),
   NEWSLETTER_WORKER_BATCH_SIZE: z.coerce.number().int().positive().max(500).default(50),
   NEWSLETTER_WORKER_CONCURRENCY: z.coerce.number().int().positive().max(100).default(5),
+  NEWSLETTER_WORKER_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().max(300_000).default(10_000),
+  NEWSLETTER_WORKER_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().max(3_600_000).default(45_000),
+  NEWSLETTER_WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().max(300_000).default(10_000),
+  NEWSLETTER_AUTO_PAUSE_CONSECUTIVE_ERRORS: z.coerce.number().int().positive().max(100).default(3),
+  NEWSLETTER_AUTO_PAUSE_MIN_ATTEMPTS: z.coerce.number().int().positive().max(10_000).default(10),
+  NEWSLETTER_AUTO_PAUSE_FAILURE_PERCENT: z.coerce.number().min(1).max(100).default(50),
+  NEWSLETTER_RATE_LIMIT_PAUSE_SECONDS: z.coerce.number().int().positive().max(86_400).default(300),
   NEWSLETTER_MAX_ATTEMPTS: z.coerce.number().int().positive().max(10).default(3),
   NEWSLETTER_RETRY_BASE_DELAY_SECONDS: z.coerce.number().int().positive().max(3600).default(60),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info')
@@ -133,6 +149,12 @@ export function validateEnvironment(input: NodeJS.ProcessEnv): Environment {
     throw new Error('Invalid environment configuration: CORS_ORIGINS must contain valid URLs');
   }
 
+  if (result.data.NEWSLETTER_WORKER_HEARTBEAT_STALE_MS < result.data.NEWSLETTER_WORKER_HEARTBEAT_INTERVAL_MS * 3) {
+    throw new Error(
+      'Invalid environment configuration: NEWSLETTER_WORKER_HEARTBEAT_STALE_MS must be at least NEWSLETTER_WORKER_HEARTBEAT_INTERVAL_MS × 3'
+    );
+  }
+
   if (result.data.NODE_ENV === 'production') {
     const requiredProductionKeys = [
       'DB_HOST',
@@ -142,11 +164,40 @@ export function validateEnvironment(input: NodeJS.ProcessEnv): Environment {
       'ADMIN_FRONTEND_URL',
       'PUBLIC_WEBSITE_URL',
       'CORS_ORIGINS',
-      'JWT_ACCESS_SECRET'
+      'JWT_ACCESS_SECRET',
+      'NEWSLETTER_HASH_SECRET'
     ] as const;
     const missing = requiredProductionKeys.filter((key) => !selectedInput[key]?.trim());
     if (missing.length > 0) {
       throw new Error(`Invalid production environment configuration: missing ${missing.join(', ')}`);
+    }
+
+    // NEWSLETTER_HASH_SECRET signs unsubscribe tokens (see
+    // unsubscribe-token.service.ts) — a weak or well-known value lets anyone
+    // forge a valid unsubscribe token for any subscriber id. Presence and the
+    // schema-level min(32) (checked above) are not enough on their own: also
+    // reject every known placeholder value, including the local-dev default.
+    const newsletterSecret = result.data.NEWSLETTER_HASH_SECRET.trim();
+    const NEWSLETTER_HASH_SECRET_MIN_LENGTH = 32;
+    const knownNewsletterSecretPlaceholders = new Set([
+      'default-newsletter-secret-change-in-prod',
+      'change-me-to-secure-random-value',
+      'local-development-newsletter-secret-not-for-prod'
+    ]);
+    const looksLikeAPlaceholder =
+      knownNewsletterSecretPlaceholders.has(newsletterSecret.toLowerCase()) ||
+      /change[\s_-]?me/i.test(newsletterSecret) ||
+      /^default[\s_-]/i.test(newsletterSecret) ||
+      /^local[\s_-]?development/i.test(newsletterSecret);
+    if (looksLikeAPlaceholder) {
+      throw new Error(
+        'Invalid production environment configuration: NEWSLETTER_HASH_SECRET is set to a known placeholder value — replace it with a cryptographically strong random secret'
+      );
+    }
+    if (newsletterSecret.length < NEWSLETTER_HASH_SECRET_MIN_LENGTH) {
+      throw new Error(
+        `Invalid production environment configuration: NEWSLETTER_HASH_SECRET must be at least ${NEWSLETTER_HASH_SECRET_MIN_LENGTH} characters`
+      );
     }
   }
 

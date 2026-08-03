@@ -4,7 +4,8 @@ import { sendSuccess } from '../../utils/api-response.js';
 import {
   subscribeEmailWithEmailDelivery,
   verifyEmailAddress,
-  unsubscribeEmailAddress
+  unsubscribeEmailAddress,
+  confirmSubscriberResubscription
 } from './newsletter-subscription.service.js';
 
 const subscribePayloadSchema = z.object({
@@ -62,6 +63,14 @@ export function createPublicNewsletterController() {
       } catch (error) {
         next(error);
       }
+    },
+
+    async confirmResubscription(request: Request, response: Response, next: NextFunction) {
+      try {
+        const payload = verifyPayloadSchema.parse(request.body);
+        const result = await confirmSubscriberResubscription(payload.token);
+        return sendSuccess(response, result.message, { success: result.success, email: result.email });
+      } catch (error) { next(error); }
     }
   };
 }

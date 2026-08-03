@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { Op, QueryTypes } from 'sequelize';
+import { Op, QueryTypes, UniqueConstraintError, type Transaction } from 'sequelize';
 import { sequelize } from '../../config/database.js';
 import { env } from '../../config/environment.js';
 import { logger } from '../../config/logger.js';
@@ -40,7 +40,8 @@ export interface MediaActor {
 }
 
 interface MediaAssetRepository {
-  create(values: Record<string, unknown>): Promise<any>;
+  create(values: Record<string, unknown>, options?: { transaction?: Transaction }): Promise<any>;
+  findOne?(options: Record<string, unknown>): Promise<any | null>;
   findByPk(id: string, options?: Record<string, unknown>): Promise<any | null>;
   findAndCountAll?(options: Record<string, unknown>): Promise<{ rows: any[]; count: number | unknown[] }>;
   findAll?(options: Record<string, unknown>): Promise<any[]>;
@@ -59,6 +60,7 @@ interface MediaServiceDependencies {
   imageProcessor?: typeof processMediaImage;
   auditWriter?: typeof writeAuthAuditLog;
   referenceChecker?: (id: string) => Promise<boolean>;
+  transactionRunner?: <T>(work: (transaction?: Transaction) => Promise<T>) => Promise<T>;
 }
 
 const storageProvider = 'cloudflare_r2';
@@ -300,6 +302,7 @@ async function isMediaReferencedByCurrentBlogVersion(mediaId: string): Promise<b
 export function createMediaService(dependencies: MediaServiceDependencies = {}) {
   const repository: MediaAssetRepository = dependencies.repository ?? {
     create: MediaAsset.create.bind(MediaAsset),
+    findOne: MediaAsset.findOne.bind(MediaAsset),
     findByPk: MediaAsset.findByPk.bind(MediaAsset),
     findAndCountAll: MediaAsset.findAndCountAll.bind(MediaAsset),
     findAll: MediaAsset.findAll.bind(MediaAsset)
@@ -310,6 +313,11 @@ export function createMediaService(dependencies: MediaServiceDependencies = {}) 
   const imageProcessor = dependencies.imageProcessor ?? processMediaImage;
   const auditWriter = dependencies.auditWriter ?? writeAuthAuditLog;
   const referenceChecker = dependencies.referenceChecker ?? (dependencies.repository ? async () => false : isMediaReferencedByCurrentBlogVersion);
+  const transactionRunner = dependencies.transactionRunner ?? (
+    dependencies.repository
+      ? async <T>(work: (transaction?: Transaction) => Promise<T>) => work()
+      : async <T>(work: (transaction?: Transaction) => Promise<T>) => sequelize.transaction((transaction) => work(transaction))
+  );
 
   return {
     async listMediaAssets(rawQuery: unknown) {
@@ -366,12 +374,20 @@ export function createMediaService(dependencies: MediaServiceDependencies = {}) 
       const mediaObjectId = randomUUID();
       const uploadedKeys: string[] = [];
       const config = getR2Configuration();
+      const idempotencyWhere = input.body.client_id && input.body.uploaded_by
+        ? { clientId: input.body.client_id, uploadedBy: input.body.uploaded_by }
+        : null;
+
+      if (idempotencyWhere && repository.findOne) {
+        const existing = await repository.findOne({ where: idempotencyWhere });
+        if (existing) return serializeMediaAsset(existing);
+      }
 
       try {
         const processed = await imageProcessor(file.buffer);
         const uploadedVariants = new Map<R2VariantName, { upload: R2ObjectUploadResult; variant: ProcessedImageVariant }>();
 
-        for (const variant of processed.variants) {
+        const uploadResults = await Promise.allSettled(processed.variants.map(async (variant) => {
           const key = generateR2ObjectKey(mediaObjectId, variant.name);
           const upload = await uploadObject({
             key,
@@ -383,9 +399,20 @@ export function createMediaService(dependencies: MediaServiceDependencies = {}) 
               media_object_id: mediaObjectId
             }
           });
-          uploadedKeys.push(key);
-          uploadedVariants.set(variant.name, { upload, variant });
+          return { key, upload, variant };
+        }));
+
+        for (const result of uploadResults) {
+          if (result.status === 'fulfilled') {
+            uploadedKeys.push(result.value.key);
+            uploadedVariants.set(result.value.variant.name, {
+              upload: result.value.upload,
+              variant: result.value.variant
+            });
+          }
         }
+        const failedUpload = uploadResults.find((result) => result.status === 'rejected');
+        if (failedUpload?.status === 'rejected') throw failedUpload.reason;
 
         const originalUpload = uploadedVariants.get('original');
         if (!originalUpload) throw new ApiError(500, 'Processed original image variant is missing');
@@ -396,31 +423,36 @@ export function createMediaService(dependencies: MediaServiceDependencies = {}) 
             .map(([name, value]) => [name, createVariantRecord(value.upload, value.variant)])
         );
 
-        const asset = await repository.create({
-          clientId: input.body.client_id ?? null,
-          storageProvider,
-          bucketName: config.bucketName,
-          provider: storageProvider,
-          providerAssetId: mediaObjectId,
-          originalObjectKey: originalUpload.upload.key,
-          variantsJson: variantRecords,
-          originalUrl: buildR2PublicUrl(originalUpload.upload.key),
-          purpose: input.body.purpose,
-          originalFileName,
-          originalFilename: originalFileName,
-          mimeType: file.mimetype,
-          outputMimeType,
-          sizeBytes: file.size,
-          fileSize: file.size,
-          width: originalUpload.variant.width ?? processed.source.width,
-          height: originalUpload.variant.height ?? processed.source.height,
-          altText: input.body.alt_text ?? null,
-          metadata: buildSafeMetadata(file, input.body.purpose, mediaObjectId),
-          status: 'active',
-          uploadedBy: input.body.uploaded_by ?? null
-        });
+        return await transactionRunner(async (transaction) => {
+          const createValues = {
+            clientId: input.body.client_id ?? null,
+            storageProvider,
+            bucketName: config.bucketName,
+            provider: storageProvider,
+            providerAssetId: mediaObjectId,
+            originalObjectKey: originalUpload.upload.key,
+            variantsJson: variantRecords,
+            originalUrl: buildR2PublicUrl(originalUpload.upload.key),
+            purpose: input.body.purpose,
+            originalFileName,
+            originalFilename: originalFileName,
+            mimeType: file.mimetype,
+            outputMimeType,
+            sizeBytes: file.size,
+            fileSize: file.size,
+            width: originalUpload.variant.width ?? processed.source.width,
+            height: originalUpload.variant.height ?? processed.source.height,
+            altText: input.body.alt_text ?? null,
+            metadata: buildSafeMetadata(file, input.body.purpose, mediaObjectId),
+            status: 'active',
+            uploadedBy: input.body.uploaded_by ?? null
+          };
+          const asset = transaction
+            ? await repository.create(createValues, { transaction })
+            : await repository.create(createValues);
 
-        return serializeMediaAsset(asset);
+          return serializeMediaAsset(asset);
+        });
       } catch (error) {
         if (uploadedKeys.length > 0) {
           try {
@@ -434,8 +466,12 @@ export function createMediaService(dependencies: MediaServiceDependencies = {}) 
           }
         }
 
+        if (error instanceof UniqueConstraintError && idempotencyWhere && repository.findOne) {
+          const existing = await repository.findOne({ where: idempotencyWhere });
+          if (existing) return serializeMediaAsset(existing);
+        }
         if (error instanceof ApiError) throw error;
-        throw new ApiError(500, 'Media asset could not be saved', undefined, error);
+        throw new ApiError(500, 'The image could not be uploaded. Please try again.', undefined, error);
       }
     },
 

@@ -124,7 +124,7 @@ export function initializeMediaAssetTable(sequelize: Sequelize): typeof MediaAss
       paranoid: true,
       deletedAt: 'deleted_at',
       indexes: [
-        { name: 'idx_media_assets_client_id', fields: ['client_id'] },
+        { name: 'ux_media_assets_uploader_client_id', unique: true, fields: ['uploaded_by', 'client_id'] },
         { name: 'idx_media_assets_storage_provider', fields: ['storage_provider'] },
         { name: 'idx_media_assets_provider_asset_id', fields: ['provider', 'provider_asset_id'] },
         { name: 'idx_media_assets_original_object_key', fields: ['original_object_key'] },

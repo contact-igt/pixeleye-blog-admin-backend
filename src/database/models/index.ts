@@ -12,6 +12,7 @@ import { MediaAsset, initializeMediaAssetTable } from '../tables/media-assets.ta
 import { NewsletterCampaign, initializeNewsletterCampaignTable } from '../tables/newsletter-campaign.table.js';
 import { NewsletterDelivery, initializeNewsletterDeliveryTable } from '../tables/newsletter-delivery.table.js';
 import { NewsletterSubscriber, initializeNewsletterSubscriberTable } from '../tables/newsletter-subscriber.table.js';
+import { NewsletterWorkerHeartbeat, initializeNewsletterWorkerHeartbeatTable } from '../tables/newsletter-worker-heartbeat.table.js';
 
 export interface AuthModels {
   AdminUser: typeof AdminUser;
@@ -38,6 +39,7 @@ export interface NewsletterModels {
   NewsletterSubscriber: typeof NewsletterSubscriber;
   NewsletterCampaign: typeof NewsletterCampaign;
   NewsletterDelivery: typeof NewsletterDelivery;
+  NewsletterWorkerHeartbeat: typeof NewsletterWorkerHeartbeat;
 }
 
 const initializedAuthSequelizeInstances = new WeakSet<Sequelize>();
@@ -104,12 +106,14 @@ export function initializeNewsletterModels(sequelize: Sequelize = defaultSequeli
     initializeNewsletterSubscriberTable(sequelize);
     initializeNewsletterCampaignTable(sequelize);
     initializeNewsletterDeliveryTable(sequelize);
+    initializeNewsletterWorkerHeartbeatTable(sequelize);
     initializedNewsletterSequelizeInstances.add(sequelize);
   }
 
   return {
     NewsletterSubscriber: sequelize.models.NewsletterSubscriber as typeof NewsletterSubscriber,
     NewsletterCampaign: sequelize.models.NewsletterCampaign as typeof NewsletterCampaign,
-    NewsletterDelivery: sequelize.models.NewsletterDelivery as typeof NewsletterDelivery
+    NewsletterDelivery: sequelize.models.NewsletterDelivery as typeof NewsletterDelivery,
+    NewsletterWorkerHeartbeat: sequelize.models.NewsletterWorkerHeartbeat as typeof NewsletterWorkerHeartbeat
   };
 }

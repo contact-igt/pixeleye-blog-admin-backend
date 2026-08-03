@@ -1,12 +1,14 @@
 import { Op, type Transaction } from 'sequelize';
 import { createHash, randomBytes } from 'crypto';
 import { sequelize } from '../../config/database.js';
+import { env } from '../../config/environment.js';
 import { ApiError } from '../../utils/api-error.js';
 import { Blog } from './blog.model.js';
 import { BlogVersion } from './blog-version.model.js';
 import { BlogFeedback } from './blog-feedback.model.js';
+import { normalizeBlogBlocks } from './blog-block.validation.js';
 
-const FEEDBACK_VISITOR_HASH_SECRET = process.env.FEEDBACK_VISITOR_HASH_SECRET || 'default-feedback-secret-change-in-prod';
+const FEEDBACK_VISITOR_HASH_SECRET = env.FEEDBACK_VISITOR_HASH_SECRET;
 
 export interface FeedbackResponse {
   success: boolean;
@@ -76,8 +78,13 @@ export async function submitFeedback(
     const blogId = String(blogData.id);
     const versionId = String(publishedVersion.id);
 
-    // For now, assume feedback is always enabled if the endpoint is called
-    // Future: check blocks.feedback?.enabled
+    const blocksDocument = normalizeBlogBlocks(publishedVersion.blocksJson);
+    const customFeedbackEnabled = Object.values(blocksDocument.custom_instances ?? {}).some(
+      (instance) => instance.componentKey === 'feedback' && instance.enabled
+    );
+    if (!blocksDocument.blocks.feedback.enabled && !customFeedbackEnabled) {
+      throw new ApiError(403, 'Feedback is not enabled for this article');
+    }
 
     // Upsert feedback
     const [feedback] = await BlogFeedback.findOrCreate({
