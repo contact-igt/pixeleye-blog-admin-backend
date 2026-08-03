@@ -34,6 +34,75 @@ const createSubscriberSchema = z.object({
 const NEWSLETTER_VERIFICATION_TTL_HOURS = parseInt(process.env.NEWSLETTER_VERIFICATION_TOKEN_TTL_HOURS || '24', 10);
 const NEWSLETTER_RESEND_COOLDOWN_MINUTES = parseInt(process.env.NEWSLETTER_VERIFICATION_RESEND_COOLDOWN_MINUTES || '5', 10);
 const PUBLIC_WEBSITE_URL = process.env.PUBLIC_WEBSITE_URL || 'https://pixeleye.in';
+type SubscriberListQuery = z.infer<typeof listQuerySchema>;
+type CsvCellValue = string | number | boolean | Date | null | undefined;
+type SubscriberExportRecord = {
+  email: string;
+  status: string;
+  source: string | null;
+  consentVersion: string | null;
+  consentAt: string | Date | null;
+  verificationSentAt: string | Date | null;
+  verifiedAt: string | Date | null;
+  unsubscribedAt: string | Date | null;
+  createdAt: string | Date;
+};
+
+function requireAuthenticatedAdmin(request: Request): NonNullable<Request['authenticatedAdmin']> {
+  if (!request.authenticatedAdmin) {
+    throw new ApiError(401, 'Authentication is required');
+  }
+
+  return request.authenticatedAdmin;
+}
+
+function buildSubscriberFilters(query: SubscriberListQuery): Record<string, unknown> {
+  const where: Record<string, unknown> = { deletedAt: null };
+  const search = query.search?.trim();
+  const source = query.source?.trim();
+
+  if (search) {
+    const escapedSearch = search.replace(/[\\%_]/g, (character) => '\\' + character);
+    where.email = {
+      [Op.like]: '%' + escapedSearch + '%'
+    };
+  }
+  if (query.status) {
+    where.status = query.status;
+  }
+  if (source) {
+    where.source = source;
+  }
+
+  return where;
+}
+
+function buildSubscriberExportFilename(date = new Date()): string {
+  return 'subscribers_' + date.toISOString().split('T')[0] + '.csv';
+}
+
+function encodeCsvCell(value: CsvCellValue): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  let normalized =
+    value instanceof Date
+      ? value.toISOString()
+      : typeof value === 'string'
+        ? value
+        : String(value);
+
+  if (typeof value === 'string' && /^[=+@\t\r-]/.test(normalized)) {
+    normalized = "'" + normalized;
+  }
+
+  if (/[",\n\r]/.test(normalized)) {
+    return '"' + normalized.replace(/"/g, '""') + '"';
+  }
+
+  return normalized;
+}
 
 function serializeSubscriber(subscriber: any) {
   const data = typeof subscriber.get === 'function' ? subscriber.get({ plain: true }) : subscriber;
@@ -95,18 +164,7 @@ export function createAdminSubscriberController() {
       try {
         const query = listQuerySchema.parse(request.query);
 
-        const where: any = { deletedAt: null };
-        if (query.search) {
-          where.email = {
-            [Op.like]: `%${query.search.replace(/[%_\\]/g, '\\$&')}%`
-          };
-        }
-        if (query.status) {
-          where.status = query.status;
-        }
-        if (query.source) {
-          where.source = query.source;
-        }
+        const where = buildSubscriberFilters(query);
 
         const sortField =
           query.sort === 'email'
@@ -212,20 +270,8 @@ export function createAdminSubscriberController() {
     async exportCsv(request: Request, response: Response, next: NextFunction) {
       try {
         const query = listQuerySchema.parse(request.query);
-        const actor = (request as any).user;
-
-        const where: any = { deletedAt: null };
-        if (query.search) {
-          where.email = {
-            [Op.like]: `%${query.search.replace(/[%_\\]/g, '\\$&')}%`
-          };
-        }
-        if (query.status) {
-          where.status = query.status;
-        }
-        if (query.source) {
-          where.source = query.source;
-        }
+        const actor = requireAuthenticatedAdmin(request);
+        const where = buildSubscriberFilters(query);
 
         const subscribers = await NewsletterSubscriber.findAll({
           where,
@@ -242,15 +288,21 @@ export function createAdminSubscriberController() {
           ],
           order: [['createdAt', 'DESC']],
           raw: true
-        });
+        }) as SubscriberExportRecord[];
 
         await writeAuthAuditLog({
           action: 'SUBSCRIBER_CSV_EXPORTED',
           adminUserId: actor.id,
-          metadata: { subscriber_count: subscribers.length, filters: { search: query.search || null, status: query.status || null, source: query.source || null } }
+          metadata: {
+            subscriber_count: subscribers.length,
+            filters: {
+              search: query.search?.trim() || null,
+              status: query.status || null,
+              source: query.source?.trim() || null
+            }
+          }
         });
 
-        // Generate CSV
         const headers = [
           'Email',
           'Status',
@@ -263,24 +315,27 @@ export function createAdminSubscriberController() {
           'Created Date'
         ];
 
-        const rows = subscribers.map((sub: any) => [
-          escapeCsvField(sub.email as string),
-          sub.status,
-          sub.source || '',
-          sub.consentVersion || '',
-          sub.consentAt ? new Date(sub.consentAt).toISOString() : '',
-          sub.verificationSentAt ? new Date(sub.verificationSentAt).toISOString() : '',
-          sub.verifiedAt ? new Date(sub.verifiedAt).toISOString() : '',
-          sub.unsubscribedAt ? new Date(sub.unsubscribedAt).toISOString() : '',
-          new Date(sub.createdAt).toISOString()
+        const rows = subscribers.map((subscriber) => [
+          subscriber.email,
+          subscriber.status,
+          subscriber.source,
+          subscriber.consentVersion,
+          subscriber.consentAt,
+          subscriber.verificationSentAt,
+          subscriber.verifiedAt,
+          subscriber.unsubscribedAt,
+          subscriber.createdAt
         ]);
 
-        const csv = [headers, ...rows].map((row) => row.join(',')).join('\n');
+        const csv = [headers, ...rows]
+          .map((row) => row.map((value) => encodeCsvCell(value)).join(','))
+          .join('\r\n');
 
         response.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        response.setHeader('Cache-Control', 'no-store');
         response.setHeader(
           'Content-Disposition',
-          `attachment; filename="subscribers_${new Date().toISOString().split('T')[0]}.csv"`
+          'attachment; filename="' + buildSubscriberExportFilename() + '"'
         );
         response.send(csv);
       } catch (error) {
@@ -704,17 +759,3 @@ export function createAdminSubscriberController() {
   };
 }
 
-function escapeCsvField(field: string | undefined | null): string {
-  const safeField = field || '';
-  if (!safeField) return '';
-  // Escape spreadsheet formula prefixes
-  const firstChar = safeField[0];
-  if (firstChar && ['+', '-', '=', '@'].includes(firstChar)) {
-    return `"'${safeField}"`;
-  }
-  // Quote if contains comma, newline, or quotes
-  if (safeField.includes(',') || safeField.includes('\n') || safeField.includes('"')) {
-    return `"${safeField.replace(/"/g, '""')}"`;
-  }
-  return safeField;
-}
