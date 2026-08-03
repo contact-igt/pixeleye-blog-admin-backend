@@ -50,7 +50,6 @@ export function initializeAuditLogTable(sequelize: Sequelize): typeof AuditLog {
       tableName: tableNames.AUDIT_LOGS,
       underscored: true,
       timestamps: true,
-      createdAt: 'created_at',
       updatedAt: false,
       indexes: [
         { name: 'idx_audit_logs_admin_user_id', fields: ['admin_user_id'] },

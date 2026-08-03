@@ -5,6 +5,8 @@ import { MediaAsset } from '../media/media.model.js';
 import { CustomTemplate } from '../custom-templates/custom-template.model.js';
 import { AdminUser } from '../auth/index.js';
 import { listBlogTemplates } from '../blogs/blog-template.registry.js';
+import { getDashboardInsights, createEmptyDashboardInsights, type DashboardInsights } from './dashboard-insights.service.js';
+import { logger } from '../../config/logger.js';
 
 function formatTrackedBytes(value?: number | null): string {
   const bytes = Number(value ?? 0);
@@ -35,6 +37,7 @@ export interface DashboardStats {
     custom_draft: number;
     custom_archived: number;
   };
+  insights: DashboardInsights;
   recent_blogs: Array<{
     id: string;
     title: string;
@@ -118,10 +121,18 @@ export function createDashboardService() {
 
       const trackedBytes = Number(storageBytesSum ?? 0);
       const systemTemplateCount = listBlogTemplates().length;
+      let insights: DashboardInsights;
+      try {
+        insights = await getDashboardInsights();
+      } catch (error) {
+        logger.warn({ err: error }, 'Dashboard insights are temporarily unavailable');
+        insights = createEmptyDashboardInsights();
+      }
 
       return {
+        insights,
         blogs: {
-          total: publishedBlogsCount + draftBlogsCount + trashedBlogsCount,
+          total: publishedBlogsCount + draftBlogsCount + insights.editorial.unpublished + trashedBlogsCount,
           published: publishedBlogsCount,
           draft: draftBlogsCount,
           trashed: trashedBlogsCount
