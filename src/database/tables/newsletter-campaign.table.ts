@@ -8,7 +8,7 @@ import {
 } from 'sequelize';
 import { tableNames } from '../table-names.js';
 
-export type CampaignStatus = 'draft' | 'queued' | 'sending' | 'completed' | 'partially_failed' | 'failed' | 'cancelled';
+export type CampaignStatus = 'draft' | 'queued' | 'sending' | 'paused' | 'completed' | 'partially_failed' | 'failed' | 'cancelled';
 
 export class NewsletterCampaign extends Model<InferAttributes<NewsletterCampaign>, InferCreationAttributes<NewsletterCampaign>> {
   declare id: CreationOptional<string>;
@@ -28,6 +28,15 @@ export class NewsletterCampaign extends Model<InferAttributes<NewsletterCampaign
   declare startedAt: Date | null;
   declare completedAt: Date | null;
   declare cancelledAt: Date | null;
+  declare pausedAt: Date | null;
+  declare pausedBy: string | null;
+  declare pauseReasonCode: string | null;
+  declare pauseReasonMessage: string | null;
+  declare autoPaused: CreationOptional<boolean>;
+  declare resumeAt: Date | null;
+  declare deletedAt: Date | null;
+  declare deletedBy: string | null;
+  declare deleteReason: string | null;
   declare createdAt: CreationOptional<Date>;
   declare updatedAt: CreationOptional<Date>;
 }
@@ -60,6 +69,15 @@ export function initializeNewsletterCampaignTable(sequelize: Sequelize): typeof 
       startedAt: { type: DataTypes.DATE, allowNull: true, field: 'started_at' },
       completedAt: { type: DataTypes.DATE, allowNull: true, field: 'completed_at' },
       cancelledAt: { type: DataTypes.DATE, allowNull: true, field: 'cancelled_at' },
+      pausedAt: { type: DataTypes.DATE(3), allowNull: true, field: 'paused_at' },
+      pausedBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'paused_by', references: { model: tableNames.ADMIN_USERS, key: 'id' }, onDelete: 'SET NULL', onUpdate: 'CASCADE' },
+      pauseReasonCode: { type: DataTypes.STRING(100), allowNull: true, field: 'pause_reason_code' },
+      pauseReasonMessage: { type: DataTypes.STRING(1000), allowNull: true, field: 'pause_reason_message' },
+      autoPaused: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false, field: 'auto_paused' },
+      resumeAt: { type: DataTypes.DATE(3), allowNull: true, field: 'resume_at' },
+      deletedAt: { type: DataTypes.DATE(3), allowNull: true, field: 'deleted_at' },
+      deletedBy: { type: DataTypes.BIGINT.UNSIGNED, allowNull: true, field: 'deleted_by', references: { model: tableNames.ADMIN_USERS, key: 'id' }, onDelete: 'SET NULL', onUpdate: 'CASCADE' },
+      deleteReason: { type: DataTypes.STRING(255), allowNull: true, field: 'delete_reason' },
       createdAt: { type: DataTypes.DATE, allowNull: false, field: 'created_at' },
       updatedAt: { type: DataTypes.DATE, allowNull: false, field: 'updated_at' }
     },
@@ -73,7 +91,8 @@ export function initializeNewsletterCampaignTable(sequelize: Sequelize): typeof 
         { name: 'idx_newsletter_campaigns_blog_id', fields: ['blog_id'] },
         { name: 'idx_newsletter_campaigns_blog_version_id', fields: ['blog_version_id'] },
         { name: 'idx_newsletter_campaigns_status', fields: ['status'] },
-        { name: 'idx_newsletter_campaigns_created_at', fields: ['created_at'] }
+        { name: 'idx_newsletter_campaigns_created_at', fields: ['created_at'] },
+        { name: 'idx_newsletter_campaigns_deleted_at', fields: ['deleted_at'] }
       ]
     }
   );

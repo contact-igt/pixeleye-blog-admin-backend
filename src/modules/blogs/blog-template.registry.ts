@@ -194,4 +194,27 @@ export function isValidTemplateSnapshot(value: unknown): boolean {
   return Boolean(getBlogTemplate(key, templateVersion) && config);
 }
 
+/**
+ * A Blog's template snapshot must only be re-resolved when the admin actually changes the
+ * template selection. `resolveBlogTemplateSelection` always follows a Custom Template's
+ * *current* (latest-saved) version, so calling it on every save — even when `template_key` is
+ * merely being resent unchanged, as the Blog editor form does on every "Save Draft" — would
+ * silently replace the Blog's frozen layout snapshot with whatever the shared Custom Template
+ * looks like *right now*, including edits made after this Blog was originally assigned to it.
+ * That can drop sections the Blog's blocks_json content was authored against without any warning.
+ */
+export function hasTemplateSelectionChanged(
+  currentSnapshot: BlogTemplateSnapshot,
+  input: { template_key?: string; custom_template_id?: string | null }
+): boolean {
+  if (input.template_key === undefined) return false;
+  if (currentSnapshot.invalid) return true;
+  if (input.template_key !== currentSnapshot.templateKey) return true;
+  if (input.template_key === INTERNAL_CUSTOM_TEMPLATE_KEY) {
+    const nextCustomTemplateId = input.custom_template_id ? String(input.custom_template_id) : null;
+    return nextCustomTemplateId !== (currentSnapshot.customTemplateId ?? null);
+  }
+  return false;
+}
+
 

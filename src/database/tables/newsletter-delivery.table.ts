@@ -8,7 +8,7 @@ import {
 } from 'sequelize';
 import { tableNames } from '../table-names.js';
 
-export type DeliveryStatus = 'pending' | 'processing' | 'sent' | 'retry_pending' | 'failed' | 'cancelled';
+export type DeliveryStatus = 'pending' | 'processing' | 'sent' | 'retry_pending' | 'failed' | 'cancelled' | 'uncertain';
 
 export class NewsletterDelivery extends Model<InferAttributes<NewsletterDelivery>, InferCreationAttributes<NewsletterDelivery>> {
   declare id: CreationOptional<string>;

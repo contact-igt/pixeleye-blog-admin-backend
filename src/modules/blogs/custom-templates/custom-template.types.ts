@@ -165,12 +165,20 @@ export interface CustomTemplateSlot {
   components: CustomTemplateComponentInstance[];
 }
 
+export interface CustomTemplateSectionSettings {
+  width?: CustomTemplateContentWidth | 'inherit';
+  backgroundStyle?: 'white' | 'slate' | 'sky' | 'inherit';
+  paddingTop?: CustomTemplateSectionSpacing | 'inherit';
+  paddingBottom?: CustomTemplateSectionSpacing | 'inherit';
+}
+
 export interface CustomTemplateSection {
   id: string;
   layout: CustomTemplateSectionLayout;
   responsiveStrategy: CustomTemplateResponsiveStrategy;
   enabled: boolean;
   background?: 'white' | 'slate' | 'sky';
+  settings?: CustomTemplateSectionSettings;
   slots: CustomTemplateSlot[];
 }
 

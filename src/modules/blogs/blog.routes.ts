@@ -21,10 +21,11 @@ export function createBlogRouter(): Router {
   router.post('/', requireRole('super_admin', 'editor', 'author'), controller.create);
   router.get('/', controller.list);
   router.get('/:id/publish-checklist', controller.checklist);
+  router.post('/:id/upgrade-custom-template', requireRole('super_admin', 'editor', 'author'), controller.upgradeCustomTemplate);
   router.post('/:id/publish', requireRole('super_admin', 'editor'), controller.publish);
   router.post('/:id/unpublish', requireRole('super_admin', 'editor'), controller.unpublish);
   router.post('/:id/restore', requireRole('super_admin', 'editor'), controller.restore);
-  router.get('/:blogId/feedback-summary', feedbackController.getSummary);
+  router.get('/:blogId/feedback-summary', requireRole('editor', 'super_admin'), feedbackController.getSummary);
   router.get('/:id', controller.detail);
   router.patch('/:id', requireRole('super_admin', 'editor', 'author'), controller.update);
   router.delete('/:id', requireRole('super_admin', 'editor', 'author'), controller.trash);

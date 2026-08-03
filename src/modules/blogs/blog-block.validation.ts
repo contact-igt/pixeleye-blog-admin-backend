@@ -1,6 +1,7 @@
 import { z, ZodError } from 'zod';
+import { blockIdSchema } from './custom-templates/custom-template.schema.js';
 import { ApiError } from '../../utils/api-error.js';
-import { BLOG_BLOCKS_SCHEMA_VERSION, createDefaultBlogBlocks, type BlogBlocksDocument, type CustomBlockInstanceContent } from './blog-block.types.js';
+import { BLOG_BLOCKS_SCHEMA_VERSION, createDefaultBlogBlocks, createDefaultTemplate2Sidebar, normalizeTemplate2Phone, type BlogBlocksDocument, type CustomBlockInstanceContent } from './blog-block.types.js';
 
 const text = (max: number) => z.string().trim().max(max);
 const mediaId = z.string().trim().regex(/^\d+$/, 'Media ID must be numeric').nullable();
@@ -12,6 +13,53 @@ const optionalHydratedMedia = {
 };
 
 const actionSchema = z.object({ label: text(80), url: safeUrl }).strict();
+
+function isSafeAppointmentUrl(value: string): boolean {
+  if (/^\/(?!\/)/.test(value)) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+const requiredText = (max: number, message: string) => z.string().trim().min(1, message).max(max);
+const template2SidebarSchema = z.object({
+  appointment_cta: z.object({
+    enabled: z.literal(true, { error: 'Appointment CTA cannot be disabled' }),
+    required: z.literal(true, { error: 'Appointment CTA is required' }),
+    heading: requiredText(180, 'Appointment heading is required'),
+    description: text(500),
+    book_appointment: z.object({
+      enabled: z.literal(true, { error: 'Book Appointment cannot be disabled' }),
+      label: requiredText(80, 'Book Appointment label is required'),
+      url: requiredText(2048, 'Book Appointment URL is required').refine(isSafeAppointmentUrl, 'Use an internal path or an HTTP/HTTPS URL')
+    }).strict(),
+    call_now: z.object({
+      enabled: z.literal(true, { error: 'Call Now cannot be disabled' }),
+      label: requiredText(80, 'Call Now label is required'),
+      phone: requiredText(40, 'Phone number is required')
+        .refine((value) => /^[+\d][\d\s().-]*$/.test(value), 'Enter a valid phone number')
+        .transform(normalizeTemplate2Phone)
+        .refine((value) => /^\+?\d{7,15}$/.test(value), 'Phone number must contain 7 to 15 digits'),
+      url: text(32).refine((value) => value === '' || /^tel:\+?\d{7,15}$/.test(value), 'Call URL must use a valid tel: URL')
+    }).strict().superRefine((value, context) => {
+      const expected = `tel:${value.phone}`;
+      if (value.url && value.url !== expected) {
+        context.addIssue({ code: 'custom', path: ['url'], message: 'Call URL must match the phone number' });
+      }
+    }).transform((value) => ({ ...value, url: `tel:${value.phone}` }))
+  }).strict(),
+  newsletter: z.object({
+    enabled: z.literal(true, { error: 'Newsletter Subscription cannot be disabled' }),
+    required: z.literal(true, { error: 'Newsletter Subscription is required' }),
+    heading: requiredText(180, 'Newsletter heading is required'),
+    description: requiredText(500, 'Newsletter description is required'),
+    email_placeholder: requiredText(120, 'Email placeholder is required'),
+    button_label: requiredText(80, 'Newsletter button label is required')
+  }).strict()
+}).strict();
 
 const customInstanceContentSchema = z.discriminatedUnion('componentKey', [
   z.object({ componentKey: z.literal('hero'), category: text(100), breadcrumb: z.array(text(80)).max(5), reviewer: z.object({ name: text(120), credentials: text(160) }).strict(), reading_time_minutes: z.number().int().min(1).max(240).nullable() }).strict(),
@@ -40,7 +88,8 @@ const blogBlocksSchema = z.object({
     share: z.object({ enabled: z.boolean() }).strict(),
     disclaimer: z.object({ enabled: z.literal(true, { error: 'Medical disclaimer cannot be disabled' }), text: text(1000) }).strict()
   }).strict(),
-  custom_instances: z.record(z.string(), customInstanceContentSchema).optional()
+  sidebar: template2SidebarSchema,
+  custom_instances: z.record(blockIdSchema, customInstanceContentSchema).optional()
 }).strict();
 
 function blockErrors(error: ZodError) { return error.issues.map((issue) => ({ field: `blocks_json.${issue.path.join('.')}`, message: issue.message })); }
@@ -96,7 +145,11 @@ export function normalizeBlogBlocks(value: unknown): BlogBlocksDocument {
     try { parsed = JSON.parse(value); }
     catch { throw new ApiError(422, 'Some article sections need attention.', [{ field: 'blocks_json', message: 'Article sections contain invalid JSON.' }]); }
   }
-  return validateBlogBlocks(stripHydratedMedia(parsed));
+  const stripped = stripHydratedMedia(parsed);
+  const withSidebar = stripped && typeof stripped === 'object' && !Array.isArray(stripped) && !('sidebar' in stripped)
+    ? { ...stripped, sidebar: createDefaultTemplate2Sidebar() }
+    : stripped;
+  return validateBlogBlocks(withSidebar);
 }
 export function collectBlogBlockMediaIds(document: BlogBlocksDocument): string[] {
   const ids: Array<string | null | undefined> = [
@@ -159,6 +212,23 @@ export function blogBlockCompletionErrors(document: BlogBlocksDocument): Array<{
 }
 export function isEnabledBlogBlockComplete(document: BlogBlocksDocument, blockKey: keyof BlogBlocksDocument['blocks']): boolean {
   return !blogBlockCompletionErrors(document).some((error) => error.field.startsWith(`blocks_json.blocks.${blockKey}`));
+}
+
+export function template2SidebarCompletionErrors(document: BlogBlocksDocument): Array<{ field: string; message: string }> {
+  const appointment = document.sidebar.appointment_cta;
+  const newsletter = document.sidebar.newsletter;
+  const errors: Array<{ field: string; message: string }> = [];
+  const add = (field: string, message: string) => errors.push({ field: `blocks_json.sidebar.${field}`, message });
+  if (!required(appointment.heading)) add('appointment_cta.heading', 'Appointment heading is required.');
+  if (!required(appointment.book_appointment.label)) add('appointment_cta.book_appointment.label', 'Book Appointment label is required.');
+  if (!required(appointment.book_appointment.url)) add('appointment_cta.book_appointment.url', 'Book Appointment URL is required.');
+  if (!required(appointment.call_now.label)) add('appointment_cta.call_now.label', 'Call Now label is required.');
+  if (!required(appointment.call_now.phone)) add('appointment_cta.call_now.phone', 'Phone number is required.');
+  if (!required(newsletter.heading)) add('newsletter.heading', 'Newsletter heading is required.');
+  if (!required(newsletter.description)) add('newsletter.description', 'Newsletter description is required.');
+  if (!required(newsletter.email_placeholder)) add('newsletter.email_placeholder', 'Email placeholder is required.');
+  if (!required(newsletter.button_label)) add('newsletter.button_label', 'Newsletter button label is required.');
+  return errors;
 }
 
 export function collectCustomInstanceMediaIds(document: BlogBlocksDocument): string[] {

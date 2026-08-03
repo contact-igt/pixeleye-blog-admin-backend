@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { CUSTOM_TEMPLATE_LIMITS, CUSTOM_TEMPLATE_SCHEMA_VERSION } from './custom-template.types.js';
+import { CUSTOM_TEMPLATE_SETTING_VALUES } from './custom-template.settings.js';
 
 const text = (max: number) => z.string().trim().max(max);
+export const blockIdSchema = z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, 'blockId may contain only letters, numbers, hyphens, and underscores');
 
 // Safe URL validator accepting HTTP, HTTPS, tel, mailto, and relative paths starting with /; rejecting javascript:, data:, file:, etc.
 export const safeUrlSchema = z.union([
@@ -92,17 +94,17 @@ const dividerSettingsSchema = z.object({
 
 // Discriminated component instance schemas
 export const componentInstanceSchema = z.discriminatedUnion('componentKey', [
-  z.object({ id: text(64), componentKey: z.literal('hero'), blockId: text(64), settings: heroSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('rich_article_content'), blockId: text(64), settings: richArticleContentSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('key_takeaways'), blockId: text(64), settings: keyTakeawaysSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('image_comparison'), blockId: text(64), settings: imageComparisonSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('numbered_list'), blockId: text(64), settings: numberedListSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('expert_quote'), blockId: text(64), settings: expertQuoteSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('medical_cta'), blockId: text(64), settings: medicalCtaSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('faq'), blockId: text(64), settings: faqSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('feedback'), blockId: text(64), settings: feedbackSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('share'), blockId: text(64), settings: shareSettingsSchema, enabled: z.boolean() }).strict(),
-  z.object({ id: text(64), componentKey: z.literal('medical_disclaimer'), blockId: text(64), settings: medicalDisclaimerSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('hero'), blockId: blockIdSchema, settings: heroSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('rich_article_content'), blockId: blockIdSchema, settings: richArticleContentSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('key_takeaways'), blockId: blockIdSchema, settings: keyTakeawaysSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('image_comparison'), blockId: blockIdSchema, settings: imageComparisonSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('numbered_list'), blockId: blockIdSchema, settings: numberedListSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('expert_quote'), blockId: blockIdSchema, settings: expertQuoteSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('medical_cta'), blockId: blockIdSchema, settings: medicalCtaSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('faq'), blockId: blockIdSchema, settings: faqSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('feedback'), blockId: blockIdSchema, settings: feedbackSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('share'), blockId: blockIdSchema, settings: shareSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('medical_disclaimer'), blockId: blockIdSchema, settings: medicalDisclaimerSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('article_table_of_contents'), blockId: z.undefined().optional(), settings: tocSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('appointment_card'), blockId: z.undefined().optional(), settings: appointmentCardSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('newsletter_card'), blockId: z.undefined().optional(), settings: newsletterCardSettingsSchema, enabled: z.boolean() }).strict(),
@@ -116,26 +118,28 @@ export const slotSchema = z.object({
   components: z.array(componentInstanceSchema).max(CUSTOM_TEMPLATE_LIMITS.MAX_COMPONENTS_PER_SLOT)
 }).strict();
 
+export const sectionSettingsSchema = z.object({
+  width: z.enum([...CUSTOM_TEMPLATE_SETTING_VALUES.contentWidth, 'inherit'] as [string, ...string[]]).optional(),
+  backgroundStyle: z.enum([...CUSTOM_TEMPLATE_SETTING_VALUES.sectionBackground, 'inherit'] as [string, ...string[]]).optional(),
+  paddingTop: z.enum([...CUSTOM_TEMPLATE_SETTING_VALUES.spacing, 'inherit'] as [string, ...string[]]).optional(),
+  paddingBottom: z.enum([...CUSTOM_TEMPLATE_SETTING_VALUES.spacing, 'inherit'] as [string, ...string[]]).optional()
+}).strict();
+
 export const sectionSchema = z.object({
   id: text(64),
-  layout: z.enum(['full_width', 'content_sidebar', 'two_column', 'three_column']),
-  responsiveStrategy: z.enum([
-    'stack_on_mobile',
-    'sidebar_below_on_tablet',
-    'equal_columns',
-    'main_sidebar',
-    'three_to_two_to_one'
-  ]),
+  layout: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.sectionLayout),
+  responsiveStrategy: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.responsiveStrategy),
   enabled: z.boolean(),
-  background: z.enum(['white', 'slate', 'sky']).optional(),
+  background: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.sectionBackground).optional(),
+  settings: sectionSettingsSchema.optional(),
   slots: z.array(slotSchema).min(1).max(CUSTOM_TEMPLATE_LIMITS.MAX_SLOTS_PER_SECTION)
 }).strict();
 
 export const pageSettingsSchema = z.object({
-  contentWidth: z.enum(['narrow', 'standard', 'wide', 'full']),
-  background: z.enum(['white', 'soft_gray', 'brand_tint']),
-  spacing: z.enum(['compact', 'normal', 'spacious']),
-  typography: z.enum(['editorial', 'modern', 'clinical'])
+  contentWidth: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.contentWidth),
+  background: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.pageBackground),
+  spacing: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.spacing),
+  typography: z.enum(CUSTOM_TEMPLATE_SETTING_VALUES.typography)
 }).strict();
 
 export const customTemplateLayoutConfigV1Schema = z.object({

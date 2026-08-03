@@ -15,10 +15,19 @@ export interface ComponentDefinition {
   category: ComponentCategory;
   requiredBlockKey: string | null;
   allowedZones: readonly ('main' | 'sidebar' | 'full')[];
+  editableInBlog: boolean;
+  requiresBlockId: boolean;
+  allowsMultiple: boolean;
+  adminEditorKey: string | null;
+  adminPreviewKey: string;
+  websiteRendererKey: string;
   accessibility: ComponentAccessibilityContract;
 }
 
-export const REGISTERED_COMPONENTS: Record<RegisteredComponentKey, ComponentDefinition> = {
+type CapabilityFields = 'editableInBlog' | 'requiresBlockId' | 'allowsMultiple' | 'adminEditorKey' | 'adminPreviewKey' | 'websiteRendererKey';
+type BaseComponentDefinition = Omit<ComponentDefinition, CapabilityFields>;
+
+const BASE_COMPONENTS: Record<RegisteredComponentKey, BaseComponentDefinition> = {
   hero: {
     key: 'hero',
     displayName: 'Hero Banner',
@@ -148,6 +157,21 @@ export const REGISTERED_COMPONENTS: Record<RegisteredComponentKey, ComponentDefi
     accessibility: { ariaRole: 'separator' }
   }
 };
+
+export const REGISTERED_COMPONENTS = Object.fromEntries(
+  Object.entries(BASE_COMPONENTS).map(([key, base]) => {
+    const content = base.category === 'content';
+    return [key, {
+      ...base,
+      editableInBlog: content && base.requiredBlockKey !== 'article_content',
+      requiresBlockId: content,
+      allowsMultiple: true,
+      adminEditorKey: content && base.requiredBlockKey !== 'article_content' ? key : null,
+      adminPreviewKey: key,
+      websiteRendererKey: key
+    }];
+  })
+) as Record<RegisteredComponentKey, ComponentDefinition>;
 
 export function isRegisteredComponentKey(key: string): key is RegisteredComponentKey {
   return key in REGISTERED_COMPONENTS;

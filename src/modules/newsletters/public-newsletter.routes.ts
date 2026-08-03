@@ -8,6 +8,7 @@ export function createPublicNewsletterRouter(): Router {
   router.post('/subscribe', controller.subscribe);
   router.post('/verify', controller.verify);
   router.post('/unsubscribe', controller.unsubscribe);
+  router.post('/resubscribe/confirm', controller.confirmResubscription);
 
   return router;
 }

@@ -2,14 +2,18 @@ import type { NextFunction, Request, Response } from 'express';
 import { sendSuccess } from '../../utils/api-response.js';
 import { ApiError } from '../../utils/api-error.js';
 import { NewsletterSubscriber } from './newsletter-subscriber.model.js';
+import { NewsletterDelivery } from './newsletter-delivery.model.js';
+import { reconcileCampaignState } from './newsletter-campaign.service.js';
 import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
-import { generateToken, hashToken, normalizeEmail } from './newsletter-subscription.service.js';
+import { generateToken, hashToken, normalizeEmail, requestSubscriberResubscription } from './newsletter-subscription.service.js';
+import { createUnsubscribeToken } from './unsubscribe-token.service.js';
 import { createMailTransporter, isMailConfigured } from '../../services/integrations/mail.service.js';
-import { generateVerificationEmail } from './email-templates.js';
+import { generateSmtpDiagnosticEmail, generateVerificationEmail } from './email-templates.js';
 import { logger } from '../../config/logger.js';
 import { sequelize } from '../../config/database.js';
 import { z } from 'zod';
 import { Op } from 'sequelize';
+import { newsletterError, newsletterErrorCodes } from './newsletter-errors.js';
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
@@ -44,6 +48,7 @@ function serializeSubscriber(subscriber: any) {
     verification_sent_at: data.verificationSentAt ? new Date(data.verificationSentAt).toISOString() : null,
     verified_at: data.verifiedAt ? new Date(data.verifiedAt).toISOString() : null,
     unsubscribed_at: data.unsubscribedAt ? new Date(data.unsubscribedAt).toISOString() : null,
+    resubscription_requested_at: data.resubscriptionRequestedAt ? new Date(data.resubscriptionRequestedAt).toISOString() : null,
     created_at: new Date(data.createdAt).toISOString(),
     updated_at: new Date(data.updatedAt).toISOString()
   };
@@ -90,7 +95,7 @@ export function createAdminSubscriberController() {
       try {
         const query = listQuerySchema.parse(request.query);
 
-        const where: any = {};
+        const where: any = { deletedAt: null };
         if (query.search) {
           where.email = {
             [Op.like]: `%${query.search.replace(/[%_\\]/g, '\\$&')}%`
@@ -209,7 +214,7 @@ export function createAdminSubscriberController() {
         const query = listQuerySchema.parse(request.query);
         const actor = (request as any).user;
 
-        const where: any = {};
+        const where: any = { deletedAt: null };
         if (query.search) {
           where.email = {
             [Op.like]: `%${query.search.replace(/[%_\\]/g, '\\$&')}%`
@@ -334,32 +339,12 @@ export function createAdminSubscriberController() {
 
               subscriber = existingSubscriber;
             } else if (subscriberData.status === 'unsubscribed') {
-              verificationToken = generateToken();
-              const verificationTokenHash = hashToken(verificationToken);
-              const unsubscribeToken = generateToken();
-              const unsubscribeTokenHash = hashToken(unsubscribeToken);
-              const expiresAt = new Date(Date.now() + NEWSLETTER_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
-
-              await existingSubscriber.update({
-                status: 'pending',
-                verificationTokenHash,
-                verificationExpiresAt: expiresAt,
-                unsubscribeTokenHash,
-                unsubscribedAt: null,
-                consentVersion: 'v1',
-                consentAt: new Date(),
-                lastVerificationSentAt: new Date(),
-                source: payload.source
-              }, { transaction });
-
-              subscriber = existingSubscriber;
+              throw newsletterError(409, 'Subscriber previously unsubscribed. Use Send Resubscription Request.', newsletterErrorCodes.SUBSCRIBER_INVALID_STATUS);
             }
           } else {
             // Create new subscriber
             verificationToken = generateToken();
             const verificationTokenHash = hashToken(verificationToken);
-            const unsubscribeToken = generateToken();
-            const unsubscribeTokenHash = hashToken(unsubscribeToken);
             const expiresAt = new Date(Date.now() + NEWSLETTER_VERIFICATION_TTL_HOURS * 60 * 60 * 1000);
 
             subscriber = await NewsletterSubscriber.create({
@@ -368,11 +353,16 @@ export function createAdminSubscriberController() {
               status: 'pending',
               verificationTokenHash,
               verificationExpiresAt: expiresAt,
-              unsubscribeTokenHash,
               source: payload.source,
               consentVersion: 'v1',
               consentAt: new Date(),
               lastVerificationSentAt: new Date()
+            }, { transaction });
+
+            // Deterministic function of the subscriber's own ID, so it can only be derived
+            // once the row (and its auto-increment ID) exists.
+            await subscriber.update({
+              unsubscribeTokenHash: hashToken(createUnsubscribeToken(subscriber.id))
             }, { transaction });
 
             wasNew = true;
@@ -402,7 +392,7 @@ export function createAdminSubscriberController() {
             }
           });
 
-          return sendSuccess(response, 'Verification email sent', serializeSubscriber(subscriber), 201);
+          return sendSuccess(response, 'Verification email sent', { ...serializeSubscriber(subscriber), email_sent: true }, 201);
         } catch (emailError) {
           logger.warn({ subscriberId: subscriber.id, email }, 'Email send failed, but subscriber was saved');
 
@@ -421,7 +411,15 @@ export function createAdminSubscriberController() {
             }
           });
 
-          return sendSuccess(response, 'Subscriber saved, but verification email could not be sent. Use Resend Verification to retry.', serializeSubscriber(subscriber), 201);
+          // 207: subscriber row was saved (pending), but the verification email failed to
+          // send. A controlled partial-failure status/field, not a plain 201 success, so
+          // callers can distinguish "saved" from "saved and emailed".
+          return sendSuccess(
+            response,
+            'Subscriber saved as pending, but the verification email could not be sent. Check SMTP configuration and use Resend Verification.',
+            { ...serializeSubscriber(subscriber), email_sent: false },
+            207
+          );
         }
       } catch (error) {
         next(error);
@@ -446,7 +444,8 @@ export function createAdminSubscriberController() {
         // TRANSACTION: Update subscriber token only
         await sequelize.transaction(async (transaction) => {
           subscriber = await NewsletterSubscriber.findByPk(subscriberId, {
-            transaction
+            transaction,
+            lock: transaction.LOCK.UPDATE
           });
 
           if (!subscriber) {
@@ -456,14 +455,14 @@ export function createAdminSubscriberController() {
           const subscriberData = subscriber.get({ plain: true }) as any;
 
           if (subscriberData.status !== 'pending') {
-            throw new ApiError(400, 'Only pending subscribers can receive verification emails');
+            throw newsletterError(409, 'Only pending subscribers can receive verification emails', newsletterErrorCodes.SUBSCRIBER_INVALID_STATUS);
           }
 
           const lastSent = subscriberData.lastVerificationSentAt;
           if (lastSent) {
             const minutesSinceLastSent = (Date.now() - new Date(lastSent).getTime()) / (1000 * 60);
             if (minutesSinceLastSent < NEWSLETTER_RESEND_COOLDOWN_MINUTES) {
-              throw new ApiError(429, `Please wait ${Math.ceil(NEWSLETTER_RESEND_COOLDOWN_MINUTES - minutesSinceLastSent)} minutes before resending.`);
+              throw newsletterError(429, `Please wait ${Math.ceil(NEWSLETTER_RESEND_COOLDOWN_MINUTES - minutesSinceLastSent)} minutes before resending.`, newsletterErrorCodes.SUBSCRIBER_VERIFICATION_COOLDOWN);
             }
           }
 
@@ -497,7 +496,7 @@ export function createAdminSubscriberController() {
             }
           });
 
-          return sendSuccess(response, 'Verification email resent', serializeSubscriber(subscriber));
+          return sendSuccess(response, 'Verification email resent', { ...serializeSubscriber(subscriber), email_sent: true });
         } catch (emailError) {
           logger.warn({ subscriberId, email: subscriber.get('email') }, 'Resend email send failed, but token was updated');
 
@@ -512,11 +511,29 @@ export function createAdminSubscriberController() {
             }
           });
 
-          return sendSuccess(response, 'Token updated, but verification email could not be sent. Try again after a moment.', serializeSubscriber(subscriber));
+          // 207: token was updated (subscriber still pending), but the email failed to
+          // send. A controlled partial-failure status/field, not a plain 200 success.
+          return sendSuccess(
+            response,
+            'Subscriber saved as pending, but the verification email could not be sent. Check SMTP configuration and use Resend Verification.',
+            { ...serializeSubscriber(subscriber), email_sent: false },
+            207
+          );
         }
       } catch (error) {
         next(error);
       }
+    },
+
+    async sendResubscription(request: Request, response: Response, next: NextFunction) {
+      try {
+        const actor = (request as any).authenticatedAdmin;
+        if (!actor) throw new ApiError(401, 'Authentication is required');
+        const subscriberId = String(request.params.id ?? '').trim();
+        if (!/^\d+$/.test(subscriberId)) throw new ApiError(400, 'Invalid subscriber ID');
+        const result = await requestSubscriberResubscription(subscriberId, actor.id);
+        return sendSuccess(response, 'Resubscription request sent', { ...serializeSubscriber(result.subscriber), email_sent: result.emailSent });
+      } catch (error) { next(error); }
     },
 
     async delete(request: Request, response: Response, next: NextFunction) {
@@ -533,20 +550,43 @@ export function createAdminSubscriberController() {
 
         const reason = (request.body?.reason || 'admin_deletion').substring(0, 255);
 
+        let affectedCampaignIds: string[] = [];
         const result = await sequelize.transaction(async (transaction) => {
           const subscriber = await NewsletterSubscriber.findByPk(subscriberId, {
-            transaction
+            transaction,
+            lock: transaction.LOCK.UPDATE
           });
 
           if (!subscriber) {
             throw new ApiError(404, 'Subscriber not found');
           }
 
-          const deliveryCount = await sequelize.models.NewsletterDelivery?.count({
+          const processingCount = await NewsletterDelivery.count({
+            where: { subscriberId, status: 'processing' },
+            transaction
+          });
+          if (processingCount > 0) {
+            throw newsletterError(409, 'This subscriber currently has an email delivery in progress. Try again after it completes.', newsletterErrorCodes.SUBSCRIBER_PROCESSING_DELIVERY);
+          }
+
+          const cancellable = await NewsletterDelivery.findAll({
+            where: { subscriberId, status: { [Op.in]: ['pending', 'retry_pending'] } },
+            attributes: ['campaignId'],
+            raw: true,
+            transaction
+          }) as unknown as Array<{ campaignId: string }>;
+          affectedCampaignIds = [...new Set(cancellable.map((delivery) => String(delivery.campaignId)))];
+          if (affectedCampaignIds.length > 0) {
+            await NewsletterDelivery.update(
+              { status: 'cancelled', failureReason: 'Subscriber deleted before delivery' },
+              { where: { subscriberId, status: { [Op.in]: ['pending', 'retry_pending'] } }, transaction }
+            );
+          }
+
+          const deliveryCount = await NewsletterDelivery.count({
             where: { subscriberId },
             transaction
-          }) ?? 0;
-
+          });
           if (deliveryCount === 0) {
             await subscriber.destroy({ transaction });
 
@@ -595,6 +635,9 @@ export function createAdminSubscriberController() {
           return { success: true, deletion_mode: 'anonymized' };
         });
 
+        for (const campaignId of affectedCampaignIds) {
+          await reconcileCampaignState(campaignId);
+        }
         return sendSuccess(response, 'Subscriber deleted', result);
       } catch (error) {
         next(error);
@@ -615,7 +658,7 @@ export function createAdminSubscriberController() {
         }
 
         const transporter = createMailTransporter();
-        const emailTemplate = generateVerificationEmail('https://example.com/verify?token=TEST_TOKEN', payload.email);
+        const emailTemplate = generateSmtpDiagnosticEmail();
 
         try {
           const fromAddress = process.env.MAIL_FROM_NAME && process.env.MAIL_FROM_NAME !== 'Pixel Eye Hospitals'
@@ -625,9 +668,9 @@ export function createAdminSubscriberController() {
           const result = await transporter.sendMail({
             from: fromAddress,
             to: payload.email,
-            subject: `[TEST] ${emailTemplate.subject}`,
-            html: `<p>This is a test email to verify SMTP configuration.</p><p>Timestamp: ${new Date().toISOString()}</p><hr>${emailTemplate.htmlBody}`,
-            text: `This is a test email to verify SMTP configuration.\n\nTimestamp: ${new Date().toISOString()}\n\n${emailTemplate.textBody}`
+            subject: emailTemplate.subject,
+            html: emailTemplate.htmlBody,
+            text: emailTemplate.textBody
           });
 
           logger.info({ messageId: result.messageId, testEmail: payload.email }, 'SMTP test email sent');
