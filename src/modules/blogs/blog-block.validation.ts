@@ -63,6 +63,7 @@ const template2SidebarSchema = z.object({
 
 const customInstanceContentSchema = z.discriminatedUnion('componentKey', [
   z.object({ componentKey: z.literal('hero'), category: text(100), breadcrumb: z.array(text(80)).max(5), reviewer: z.object({ name: text(120), credentials: text(160) }).strict(), reading_time_minutes: z.number().int().min(1).max(240).nullable() }).strict(),
+  z.object({ componentKey: z.literal('rich_article_content'), enabled: z.literal(true), content_json: z.unknown(), html: text(200000) }).strict(),
   z.object({ componentKey: z.literal('key_takeaways'), enabled: z.boolean(), heading: text(120), items: z.array(text(240)).max(5) }).strict(),
   z.object({ componentKey: z.literal('image_comparison'), enabled: z.boolean(), heading: text(120), items: z.array(z.object({ media_id: mediaId, title: text(120), description: text(500) }).strict()).max(6) }).strict(),
   z.object({ componentKey: z.literal('numbered_list'), enabled: z.boolean(), heading: text(120), items: z.array(z.object({ title: text(120), description: text(500) }).strict()).max(10) }).strict(),
@@ -245,6 +246,9 @@ function customInstanceErrors(blockId: string, instance: CustomBlockInstanceCont
   const errors: Array<{ field: string; message: string }> = [];
   const add = (field: string, message: string) => errors.push({ field: `blocks_json.custom_instances.${blockId}.${field}`, message });
   switch (instance.componentKey) {
+    case 'rich_article_content':
+      if (!required(instance.html.replace(/<[^>]*>/g, ''))) add('html', 'Rich Article Content is required.');
+      break;
     case 'medical_disclaimer':
       if (!required(instance.text)) add('text', 'Medical disclaimer text is required.');
       break;

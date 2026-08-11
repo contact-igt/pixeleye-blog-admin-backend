@@ -47,6 +47,9 @@ export function normalizeCustomTemplateSettings(rawConfig: unknown): unknown {
   config.page = { ...DEFAULT_CUSTOM_TEMPLATE_PAGE_SETTINGS, ...page };
   if (!Array.isArray(config.sections)) return config;
 
+  let hasMainArticleContent = false;
+  const seenBlockIds = new Set<string>();
+
   config.sections = config.sections.map((rawSection: unknown) => {
     if (!rawSection || typeof rawSection !== 'object' || Array.isArray(rawSection)) return rawSection;
     const section = rawSection as Record<string, any>;
@@ -86,8 +89,21 @@ export function normalizeCustomTemplateSettings(rawConfig: unknown): unknown {
             settings.style = settings.variant === 'dots' ? 'dashed' : settings.variant;
             delete settings.variant;
           }
+          let blockId = component.blockId;
+          if (component.componentKey === 'rich_article_content') {
+            if (!hasMainArticleContent) {
+              hasMainArticleContent = true;
+              blockId = blockId || 'article_content';
+            } else if (!blockId || blockId === 'article_content' || seenBlockIds.has(blockId)) {
+              blockId = component.id ? `article_${component.id}` : `rich_article_extra_${seenBlockIds.size + 1}`;
+            }
+          }
+          if (blockId) {
+            seenBlockIds.add(blockId);
+          }
           return {
             ...component,
+            ...(blockId ? { blockId } : {}),
             enabled: component.enabled ?? true,
             settings: { ...DEFAULT_COMPONENT_SETTINGS[component.componentKey as RegisteredComponentKey], ...settings }
           };

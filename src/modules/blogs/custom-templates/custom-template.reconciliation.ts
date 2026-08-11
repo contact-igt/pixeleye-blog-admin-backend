@@ -24,8 +24,9 @@ export function collectActiveContentReferences(layout: CustomTemplateLayoutConfi
       for (const component of slot.components) {
         if (component.enabled === false) continue;
         const definition = getComponentDefinition(component.componentKey);
-        if (!definition.editableInBlog || !definition.requiresBlockId || component.componentKey === 'rich_article_content') continue;
         const blockId = (component as { blockId?: string }).blockId;
+        if (!definition.requiresBlockId || !blockId || blockId === 'article_content') continue;
+        if (!definition.editableInBlog && component.componentKey !== 'rich_article_content') continue;
         if (!blockId || seen.has(blockId)) continue;
         seen.add(blockId);
         references.push({ blockId, componentKey: component.componentKey as CustomBlockInstanceContent['componentKey'] });
