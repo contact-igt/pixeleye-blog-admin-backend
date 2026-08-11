@@ -75,6 +75,7 @@ export function createDefaultTemplate2Sidebar(): Template2SidebarConfig {
 
 export type CustomBlockInstanceContent =
   | { componentKey: 'hero'; category: string; breadcrumb: string[]; reviewer: { name: string; credentials: string }; reading_time_minutes: number | null }
+  | { componentKey: 'rich_article_content'; enabled: true; content_json: unknown; html: string }
   | { componentKey: 'key_takeaways'; enabled: boolean; heading: string; items: string[] }
   | { componentKey: 'image_comparison'; enabled: boolean; heading: string; items: Array<{ media_id: string | null; title: string; description: string }> }
   | { componentKey: 'numbered_list'; enabled: boolean; heading: string; items: Array<{ title: string; description: string }> }
@@ -88,8 +89,17 @@ export type CustomBlockInstanceContent =
 export function createDefaultCustomInstanceContent(componentKey: CustomBlockInstanceContent['componentKey']): CustomBlockInstanceContent {
   switch (componentKey) {
     case 'hero': return { componentKey, category: '', breadcrumb: [], reviewer: { name: '', credentials: '' }, reading_time_minutes: null };
+    case 'rich_article_content': return { componentKey, enabled: true, content_json: { type: 'doc', content: [{ type: 'paragraph' }] }, html: '' };
     case 'key_takeaways': return { componentKey, enabled: false, heading: 'Key Takeaways', items: [] };
-    case 'image_comparison': return { componentKey, enabled: false, heading: '', items: [] };
+    case 'image_comparison': return {
+      componentKey,
+      enabled: true,
+      heading: 'Treatment Comparison',
+      items: [
+        { media_id: null, title: 'Before Treatment', description: '' },
+        { media_id: null, title: 'After Treatment', description: '' }
+      ]
+    };
     case 'numbered_list': return { componentKey, enabled: false, heading: '', items: [] };
     case 'expert_quote': return { componentKey, enabled: false, quote: '', name: '', role: '', media_id: null, profile_url: '' };
     case 'medical_cta': return { componentKey, enabled: false, heading: '', description: '', primary: { label: '', url: '' }, secondary: { label: '', url: '' } };

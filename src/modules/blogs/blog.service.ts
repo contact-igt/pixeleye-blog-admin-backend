@@ -23,6 +23,7 @@ import { assertUse } from '../custom-templates/custom-template.authorization.js'
 import { CustomTemplate, CustomTemplateVersion } from '../custom-templates/custom-template.model.js';
 import { validateCustomTemplateLayout } from './custom-templates/custom-template.validation.js';
 import { reconcileCustomTemplateBlocks } from './custom-templates/custom-template.reconciliation.js';
+import { normalizeCustomTemplateSettings } from './custom-templates/custom-template.settings.js';
 import {
   blogListQuerySchema,
   blogTrashListQuerySchema,
@@ -231,7 +232,7 @@ function versionSummary(version: any, includeContent = true, mediaMap?: Map<stri
     template: templateMetadata(snapshot),
     custom_template_id: snapshot.customTemplateId,
     custom_template_version_id: snapshot.customTemplateVersionId,
-    ...(snapshot.templateKey === 'custom_template' ? { template_config_json: snapshot.invalid ? null : snapshot.templateConfigJson, template_invalid: Boolean(snapshot.invalid) } : {}),
+    ...(snapshot.templateKey === 'custom_template' ? { template_config_json: snapshot.invalid ? null : normalizeCustomTemplateSettings(snapshot.templateConfigJson), template_invalid: Boolean(snapshot.invalid) } : {}),
     created_at: data.createdAt ?? data.created_at
   };
 }

@@ -131,9 +131,6 @@ export function validateCustomTemplateLayout(
               message: `Content component '${comp.componentKey}' requires a blockId reference.`
             });
           } else {
-            if (comp.componentKey === 'rich_article_content' && blockId !== 'article_content') {
-              errors.push({ path: `${compPath}.blockId`, message: "Rich Article Content must use the 'article_content' blockId." });
-            }
             if (comp.componentKey !== 'rich_article_content' && blockId === 'article_content') {
               errors.push({ path: `${compPath}.blockId`, message: "The 'article_content' blockId is reserved for Rich Article Content." });
             }
@@ -146,7 +143,7 @@ export function validateCustomTemplateLayout(
               }
             }
             const placementEnabled = section.enabled !== false && comp.enabled !== false;
-            if (blocksDoc && placementEnabled && comp.componentKey !== 'rich_article_content') {
+            if (blocksDoc && placementEnabled && blockId !== 'article_content') {
               const instance = blocksDoc.custom_instances?.[blockId];
               if (!instance) {
                 errors.push({ path: `${compPath}.blockId`, message: `Referenced block '${blockId}' was not found in blocks_json.custom_instances.` });
