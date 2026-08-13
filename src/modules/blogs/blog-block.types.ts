@@ -75,7 +75,7 @@ export function createDefaultTemplate2Sidebar(): Template2SidebarConfig {
 
 export type CustomBlockInstanceContent =
   | { componentKey: 'hero'; category: string; breadcrumb: string[]; reviewer: { name: string; credentials: string }; reading_time_minutes: number | null }
-  | { componentKey: 'rich_article_content'; enabled: true; content_json: unknown; html: string }
+  | { componentKey: 'rich_article_content'; enabled: boolean; content_json: unknown; html: string }
   | { componentKey: 'key_takeaways'; enabled: boolean; heading: string; items: string[] }
   | { componentKey: 'image_comparison'; enabled: boolean; heading: string; items: Array<{ media_id: string | null; title: string; description: string }> }
   | { componentKey: 'numbered_list'; enabled: boolean; heading: string; items: Array<{ title: string; description: string }> }
