@@ -15,7 +15,22 @@ export const sequelize = new Sequelize(env.DB_NAME, env.DB_USER, env.DB_PASSWORD
     charset: 'utf8mb4',
     collate: 'utf8mb4_unicode_ci'
   },
-  pool: { max: 10, min: 0, acquire: 30_000, idle: 10_000 }
+  pool: { max: 10, min: 0, acquire: 30_000, idle: 10_000 },
+  retry: {
+    max: 3,
+    match: [
+      /Connection lost/i,
+      /PROTOCOL_CONNECTION_LOST/i,
+      /ECONNRESET/i,
+      /ETIMEDOUT/i,
+      /ECONNREFUSED/i,
+      /SequelizeConnectionError/,
+      /SequelizeConnectionRefusedError/,
+      /SequelizeConnectionTimedOutError/,
+      /SequelizeHostNotFoundError/,
+      /SequelizeHostNotReachableError/
+    ]
+  }
 });
 
 export async function authenticateDatabase(): Promise<void> {

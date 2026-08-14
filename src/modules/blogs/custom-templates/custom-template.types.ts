@@ -48,7 +48,8 @@ export type ContentComponentKey =
   | 'faq'
   | 'feedback'
   | 'share'
-  | 'medical_disclaimer';
+  | 'medical_disclaimer'
+  | 'table';
 
 export type SystemComponentKey =
   | 'article_table_of_contents'
@@ -115,6 +116,14 @@ export interface MedicalDisclaimerSettings {
   variant: 'standard' | 'prominent';
 }
 
+export interface TableSettings {
+  variant: 'striped' | 'bordered' | 'clean';
+  headerStyle: 'brand_sky' | 'dark_slate' | 'light_gray';
+  alignment: 'left' | 'center';
+  maxRows: number;
+  maxColumns: number;
+}
+
 export interface TocSettings {
   headingLevels: Array<2 | 3 | 4>;
   sticky: boolean;
@@ -153,6 +162,7 @@ export type CustomTemplateComponentInstance =
   | { id: string; componentKey: 'feedback'; blockId: string; settings: FeedbackSettings; enabled: boolean }
   | { id: string; componentKey: 'share'; blockId: string; settings: ShareSettings; enabled: boolean }
   | { id: string; componentKey: 'medical_disclaimer'; blockId: string; settings: MedicalDisclaimerSettings; enabled: boolean }
+  | { id: string; componentKey: 'table'; blockId: string; settings: TableSettings; enabled: boolean }
   | { id: string; componentKey: 'article_table_of_contents'; blockId?: undefined; settings: TocSettings; enabled: boolean }
   | { id: string; componentKey: 'appointment_card'; blockId?: undefined; settings: AppointmentCardSettings; enabled: boolean }
   | { id: string; componentKey: 'newsletter_card'; blockId?: undefined; settings: NewsletterCardSettings; enabled: boolean }
