@@ -183,6 +183,55 @@ export function validateCustomTemplateLayout(
   return parsed;
 }
 
+/**
+ * Enforces that a table's actual row/column count stays within the capacity configured on its
+ * Custom Template component (settings.maxRows/maxColumns are a ceiling, not a fixed size).
+ * Only call this on the explicit "save new content" path (see blog.service.ts versionPayload) —
+ * NOT on read/reconcile paths for already-stored drafts/published content, so that shrinking a
+ * template's limits later never breaks previously saved, previously valid blogs.
+ */
+export function validateCustomTemplateTableCapacity(
+  layout: CustomTemplateLayoutConfigV1,
+  blocksDoc: BlogBlocksDocument
+): void {
+  const errors: CustomTemplateValidationError[] = [];
+
+  layout.sections.forEach((section, secIdx) => {
+    section.slots.forEach((slot, slotIdx) => {
+      slot.components.forEach((comp, compIdx) => {
+        if (comp.componentKey !== 'table') return;
+        const blockId = (comp as { blockId?: string }).blockId;
+        if (!blockId) return;
+        const instance = blocksDoc.custom_instances?.[blockId];
+        if (!instance || instance.componentKey !== 'table') return;
+
+        const compPath = `sections[${secIdx}].slots[${slotIdx}].components[${compIdx}]`;
+        const { maxColumns, maxRows } = comp.settings;
+        if (instance.headers.length > maxColumns) {
+          errors.push({
+            path: `${compPath}.blockId`,
+            message: `Table '${blockId}' has ${instance.headers.length} columns, which exceeds this template's maximum of ${maxColumns}.`
+          });
+        }
+        if (instance.rows.length > maxRows) {
+          errors.push({
+            path: `${compPath}.blockId`,
+            message: `Table '${blockId}' has ${instance.rows.length} rows, which exceeds this template's maximum of ${maxRows}.`
+          });
+        }
+      });
+    });
+  });
+
+  if (errors.length > 0) {
+    throw new ApiError(
+      422,
+      'Table content exceeds the capacity configured on this Custom Template.',
+      errors.map((err) => ({ field: `blocks_json.${err.path}`, message: err.message }))
+    );
+  }
+}
+
 export function isValidCustomTemplateConfig(rawConfig: unknown, blocksDoc?: BlogBlocksDocument | null): boolean {
   try {
     validateCustomTemplateLayout(rawConfig, blocksDoc);

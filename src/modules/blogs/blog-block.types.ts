@@ -84,7 +84,8 @@ export type CustomBlockInstanceContent =
   | { componentKey: 'faq'; enabled: boolean; heading: string; items: Array<{ question: string; answer: string }> }
   | { componentKey: 'feedback'; enabled: boolean; prompt: string }
   | { componentKey: 'share'; enabled: boolean }
-  | { componentKey: 'medical_disclaimer'; enabled: true; text: string };
+  | { componentKey: 'medical_disclaimer'; enabled: true; text: string }
+  | { componentKey: 'table'; enabled: boolean; heading: string; content: string; headers: string[]; rows: string[][] };
 
 export function createDefaultCustomInstanceContent(componentKey: CustomBlockInstanceContent['componentKey']): CustomBlockInstanceContent {
   switch (componentKey) {
@@ -107,6 +108,17 @@ export function createDefaultCustomInstanceContent(componentKey: CustomBlockInst
     case 'feedback': return { componentKey, enabled: true, prompt: 'Was this article helpful?' };
     case 'share': return { componentKey, enabled: true };
     case 'medical_disclaimer': return { componentKey, enabled: true, text: DEFAULT_MEDICAL_DISCLAIMER };
+    case 'table': return {
+      componentKey,
+      enabled: true,
+      heading: 'Comparison Table',
+      content: '',
+      headers: ['Feature', 'Option A', 'Option B'],
+      rows: [
+        ['Feature 1', 'Value A1', 'Value B1'],
+        ['Feature 2', 'Value A2', 'Value B2']
+      ]
+    };
   }
 }
 

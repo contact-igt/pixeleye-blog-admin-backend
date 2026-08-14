@@ -116,6 +116,14 @@ const BASE_COMPONENTS: Record<RegisteredComponentKey, BaseComponentDefinition> =
     allowedZones: ['main', 'full'],
     accessibility: { landmarkType: 'contentinfo' }
   },
+  table: {
+    key: 'table',
+    displayName: 'Data & Comparison Table',
+    category: 'content',
+    requiredBlockKey: 'table',
+    allowedZones: ['main', 'full'],
+    accessibility: { landmarkType: 'region', requiredHeadingLabel: 'Table' }
+  },
   article_table_of_contents: {
     key: 'article_table_of_contents',
     displayName: 'Table of Contents',

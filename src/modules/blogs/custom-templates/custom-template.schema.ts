@@ -67,6 +67,14 @@ const medicalDisclaimerSettingsSchema = z.object({
   variant: z.enum(['standard', 'prominent'])
 }).strict();
 
+const tableSettingsSchema = z.object({
+  variant: z.enum(['striped', 'bordered', 'clean']),
+  headerStyle: z.enum(['brand_sky', 'dark_slate', 'light_gray']),
+  alignment: z.enum(['left', 'center']),
+  maxRows: z.number().int().min(1).max(50),
+  maxColumns: z.number().int().min(1).max(10)
+}).strict();
+
 const tocSettingsSchema = z.object({
   headingLevels: z.array(z.union([z.literal(2), z.literal(3), z.literal(4)])).min(1),
   sticky: z.boolean()
@@ -105,6 +113,7 @@ export const componentInstanceSchema = z.discriminatedUnion('componentKey', [
   z.object({ id: text(64), componentKey: z.literal('feedback'), blockId: blockIdSchema, settings: feedbackSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('share'), blockId: blockIdSchema, settings: shareSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('medical_disclaimer'), blockId: blockIdSchema, settings: medicalDisclaimerSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('table'), blockId: blockIdSchema, settings: tableSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('article_table_of_contents'), blockId: z.undefined().optional(), settings: tocSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('appointment_card'), blockId: z.undefined().optional(), settings: appointmentCardSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('newsletter_card'), blockId: z.undefined().optional(), settings: newsletterCardSettingsSchema, enabled: z.boolean() }).strict(),

@@ -21,7 +21,7 @@ import {
 } from './blog-template.registry.js';
 import { assertUse } from '../custom-templates/custom-template.authorization.js';
 import { CustomTemplate, CustomTemplateVersion } from '../custom-templates/custom-template.model.js';
-import { validateCustomTemplateLayout } from './custom-templates/custom-template.validation.js';
+import { validateCustomTemplateLayout, validateCustomTemplateTableCapacity } from './custom-templates/custom-template.validation.js';
 import { reconcileCustomTemplateBlocks } from './custom-templates/custom-template.reconciliation.js';
 import { normalizeCustomTemplateSettings } from './custom-templates/custom-template.settings.js';
 import {
@@ -377,17 +377,21 @@ async function resolveBlogTemplateSelection(
   };
 }
 
-function reconcileBlocksForTemplate(blocks: BlogBlocksDocument, template: BlogTemplateSnapshot, keepOrphans: boolean): BlogBlocksDocument {
+function reconcileBlocksForTemplate(blocks: BlogBlocksDocument, template: BlogTemplateSnapshot, keepOrphans: boolean, enforceCapacity = false): BlogBlocksDocument {
   if (template.templateKey !== INTERNAL_CUSTOM_TEMPLATE_KEY || template.invalid) return blocks;
   const layout = validateCustomTemplateLayout(template.templateConfigJson);
   const reconciled = reconcileCustomTemplateBlocks(layout, blocks, { keepOrphans }).document;
   validateCustomTemplateLayout(layout, reconciled);
+  // Capacity (settings.maxRows/maxColumns) is only enforced when new content is being saved —
+  // never on reconciliation of already-stored drafts/published content (checklist, publish, template
+  // upgrade), so a later template downgrade never breaks blogs that were valid when they were saved.
+  if (enforceCapacity) validateCustomTemplateTableCapacity(layout, reconciled);
   return reconciled;
 }
 
 function versionPayload(input: CreateBlogInput | UpdateBlogInput, template: BlogTemplateSnapshot) {
   const contentJson = input.content_json != null ? parseContentJson(input.content_json) : null;
-  const blocksJson = reconcileBlocksForTemplate(normalizeBlogBlocks(input.blocks_json), template, true);
+  const blocksJson = reconcileBlocksForTemplate(normalizeBlogBlocks(input.blocks_json), template, true, true);
   return {
     title: input.title,
     excerpt: input.excerpt ?? null,

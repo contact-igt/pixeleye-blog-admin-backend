@@ -72,7 +72,15 @@ const customInstanceContentSchema = z.discriminatedUnion('componentKey', [
   z.object({ componentKey: z.literal('faq'), enabled: z.boolean(), heading: text(160), items: z.array(z.object({ question: text(240), answer: text(1000) }).strict()).max(10) }).strict(),
   z.object({ componentKey: z.literal('feedback'), enabled: z.boolean(), prompt: text(160) }).strict(),
   z.object({ componentKey: z.literal('share'), enabled: z.boolean() }).strict(),
-  z.object({ componentKey: z.literal('medical_disclaimer'), enabled: z.literal(true, { error: 'Medical disclaimer cannot be disabled' }), text: text(1000) }).strict()
+  z.object({ componentKey: z.literal('medical_disclaimer'), enabled: z.literal(true, { error: 'Medical disclaimer cannot be disabled' }), text: text(1000) }).strict(),
+  z.object({
+    componentKey: z.literal('table'),
+    enabled: z.boolean(),
+    heading: text(180),
+    content: text(1000),
+    headers: z.array(text(120)).min(1).max(10),
+    rows: z.array(z.array(text(500)).max(10)).min(1).max(50)
+  }).strict()
 ]);
 
 const blogBlocksSchema = z.object({
@@ -135,9 +143,29 @@ function stripHydratedMedia(data: any): any {
   return clone;
 }
 
+function tableMatrixErrors(document: BlogBlocksDocument): Array<{ field: string; message: string }> {
+  const errors: Array<{ field: string; message: string }> = [];
+  for (const [blockId, instance] of Object.entries(document.custom_instances ?? {})) {
+    if (instance.componentKey !== 'table') continue;
+    instance.rows.forEach((row, rowIndex) => {
+      if (row.length !== instance.headers.length) {
+        errors.push({
+          field: `blocks_json.custom_instances.${blockId}.rows.${rowIndex}`,
+          message: 'Each table row must contain exactly the same number of cells as the number of headers.'
+        });
+      }
+    });
+  }
+  return errors;
+}
+
 export function validateBlogBlocks(value: unknown): BlogBlocksDocument {
-  try { return blogBlocksSchema.parse(value) as BlogBlocksDocument; }
+  let parsed: BlogBlocksDocument;
+  try { parsed = blogBlocksSchema.parse(value) as BlogBlocksDocument; }
   catch (error) { if (error instanceof ZodError) throw new ApiError(422, 'Some article sections need attention.', blockErrors(error)); throw error; }
+  const matrixErrors = tableMatrixErrors(parsed);
+  if (matrixErrors.length > 0) throw new ApiError(422, 'Some article sections need attention.', matrixErrors);
+  return parsed;
 }
 export function normalizeBlogBlocks(value: unknown): BlogBlocksDocument {
   if (value === null || value === undefined) return createDefaultBlogBlocks();
@@ -291,6 +319,11 @@ function customInstanceErrors(blockId: string, instance: CustomBlockInstanceCont
       if (!required(instance.heading)) add('heading', 'FAQ heading is required.');
       if (instance.items.length < 1) add('items', 'Add at least one FAQ item.');
       instance.items.forEach((item, index) => { if (!required(item.question)) add(`items.${index}.question`, 'FAQ question is required.'); if (!required(item.answer)) add(`items.${index}.answer`, 'FAQ answer is required.'); });
+      break;
+    case 'table':
+      if (!instance.enabled) break;
+      if (instance.headers.length < 1) add('headers', 'Add at least one column.');
+      if (instance.rows.length < 1) add('rows', 'Add at least one row.');
       break;
     default:
       break;
