@@ -1,6 +1,7 @@
 import { generateHTML } from '@tiptap/html';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+import Underline from '@tiptap/extension-underline';
 import sanitizeHtml from 'sanitize-html';
 import { z } from 'zod';
 import { ApiError } from '../../utils/api-error.js';
@@ -13,9 +14,9 @@ export const reservedBlogSlugs = ['create', 'edit', 'new', 'trash', 'preview', '
 const optionalTrimmed = (max: number) => z.string().trim().max(max).optional().nullable().transform((value) => value || null);
 const optionalNumericString = z.string().trim().regex(/^\d+$/).optional();
 const contentJsonSchema = z.unknown().optional().nullable();
-const editorExtensions = [StarterKit.configure({ heading: { levels: [2, 3, 4] }, link: false }), Link.configure({ protocols: ['http', 'https'], openOnClick: false })];
+const editorExtensions = [StarterKit.configure({ heading: { levels: [2, 3, 4] }, link: false }), Link.configure({ protocols: ['http', 'https'], openOnClick: false }), Underline];
 const allowedNodes = new Set(['doc', 'paragraph', 'text', 'heading', 'bulletList', 'orderedList', 'listItem', 'blockquote', 'horizontalRule', 'hardBreak']);
-const allowedMarks = new Set(['bold', 'italic', 'link']);
+const allowedMarks = new Set(['bold', 'italic', 'underline', 'link']);
 const baseBlogSchema = z.object({ title: z.string().trim().min(3).max(180), slug: z.string().trim().max(191).optional(), excerpt: optionalTrimmed(500), content_json: contentJsonSchema, content_html: z.unknown().optional().nullable(), featured_media_id: optionalNumericString.nullable(), seo_title: optionalTrimmed(70), seo_description: optionalTrimmed(170), canonical_url: z.string().trim().url().max(2048).optional().nullable().transform((value) => value || null), template_key: z.enum(storedBlogTemplateKeys).optional(), custom_template_id: optionalNumericString.nullable(), blocks_json: z.unknown().optional().nullable() }).strict();
 function assertTemplateSelection(value: { template_key?: string; custom_template_id?: string | null }, context: z.RefinementCtx) {
   if (value.template_key === INTERNAL_CUSTOM_TEMPLATE_KEY && !value.custom_template_id) {
@@ -48,6 +49,6 @@ function validateNode(node: unknown, isRoot = false): asserts node is TipTapNode
 export function validateBlogEditorJson(value: unknown): TipTapDocument { validateNode(parseTipTapValue(value), true); return parseTipTapValue(value) as TipTapDocument; }
 export function isBlogContentEmpty(value: unknown): boolean { try { const parsed = parseTipTapValue(value); const doc = validateBlogEditorJson(parsed); const visit = (node: TipTapNode): boolean => Boolean(node.text?.trim()) || Boolean(node.content?.some(visit)); return !visit(doc); } catch { return true; } }
 export function generateBlogHtmlFromJson(value: unknown): string { return generateHTML(validateBlogEditorJson(parseTipTapValue(value)), editorExtensions); }
-export function sanitizeGeneratedBlogHtml(value: string): string { return sanitizeHtml(value, { allowedTags: ['p', 'br', 'strong', 'em', 'ol', 'ul', 'li', 'a', 'blockquote', 'h2', 'h3', 'h4', 'hr'], allowedAttributes: { a: ['href', 'target', 'rel'] }, allowedSchemes: ['http', 'https'], transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true) } }); }
+export function sanitizeGeneratedBlogHtml(value: string): string { return sanitizeHtml(value, { allowedTags: ['p', 'br', 'strong', 'em', 'u', 'ol', 'ul', 'li', 'a', 'blockquote', 'h2', 'h3', 'h4', 'hr'], allowedAttributes: { a: ['href', 'target', 'rel'] }, allowedSchemes: ['http', 'https'], transformTags: { a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer' }, true) } }); }
 export function sanitizeBlogHtml(value?: string | null): string | null { return value ? sanitizeGeneratedBlogHtml(value) : null; }
 export function normalizeBlogSlug(input: string): string { const slug = input.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, ''); if (!slug) throw new ApiError(422, 'Blog slug is required'); if (reservedBlogSlugs.includes(slug as (typeof reservedBlogSlugs)[number])) throw new ApiError(409, 'Blog slug is reserved'); return slug; }
