@@ -11,6 +11,7 @@ function actor(request: Request) {
 export function createBlogController(service: BlogService = createBlogService()) {
   return {
     async templates(_request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog templates fetched', service.listTemplates()); } catch (error) { next(error); } },
+    async categories(_request: Request, response: Response, next: NextFunction) { try { actor(_request); return sendSuccess(response, 'Blog categories fetched', await service.listBlogCategories()); } catch (error) { next(error); } },
     async create(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog draft created', await service.createBlog(request.body, actor(request)), 201); } catch (error) { next(error); } },
     async list(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blogs fetched', await service.listBlogs(request.query, actor(request))); } catch (error) { next(error); } },
     async trashList(request: Request, response: Response, next: NextFunction) { try { return sendSuccess(response, 'Blog trash fetched', await service.listTrashedBlogs(request.query, actor(request))); } catch (error) { next(error); } },

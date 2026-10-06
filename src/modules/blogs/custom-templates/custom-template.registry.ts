@@ -148,6 +148,22 @@ const BASE_COMPONENTS: Record<RegisteredComponentKey, BaseComponentDefinition> =
     allowedZones: ['sidebar', 'main', 'full'],
     accessibility: { landmarkType: 'complementary' }
   },
+  blog_categories: {
+    key: 'blog_categories',
+    displayName: 'Blog Categories',
+    category: 'system',
+    requiredBlockKey: null,
+    allowedZones: ['sidebar', 'main', 'full'],
+    accessibility: { landmarkType: 'navigation', requiredHeadingLabel: 'Categories' }
+  },
+  recent_related_blogs: {
+    key: 'recent_related_blogs',
+    displayName: 'Recent & Related Blogs',
+    category: 'system',
+    requiredBlockKey: null,
+    allowedZones: ['sidebar', 'main', 'full'],
+    accessibility: { landmarkType: 'complementary' }
+  },
   spacer: {
     key: 'spacer',
     displayName: 'Vertical Spacer',

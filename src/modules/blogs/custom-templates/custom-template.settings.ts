@@ -1,7 +1,7 @@
 import type { CustomTemplatePageSettings, CustomTemplateSectionLayout, RegisteredComponentKey } from './custom-template.types.js';
 
 export const CUSTOM_TEMPLATE_SETTING_VALUES = Object.freeze({
-  contentWidth: ['narrow', 'standard', 'wide', 'full'] as const,
+  contentWidth: ['narrow', 'standard', 'wide', 'extra_wide', 'full'] as const,
   pageBackground: ['white', 'soft_gray', 'brand_tint'] as const,
   spacing: ['compact', 'normal', 'spacious'] as const,
   typography: ['editorial', 'modern', 'clinical'] as const,
@@ -25,7 +25,7 @@ const DEFAULT_COMPONENT_SETTINGS: Record<RegisteredComponentKey, Record<string, 
   numbered_list: { style: 'circle' },
   expert_quote: { orientation: 'horizontal', background: 'soft' },
   medical_cta: { style: 'navy', buttonLayout: 'inline' },
-  faq: { layout: 'accordion', defaultOpen: 'none' },
+  faq: { layout: 'qa_list', defaultOpen: 'none' },
   feedback: { showPrompt: true },
   share: { alignment: 'center' },
   medical_disclaimer: { variant: 'standard' },
@@ -33,6 +33,8 @@ const DEFAULT_COMPONENT_SETTINGS: Record<RegisteredComponentKey, Record<string, 
   article_table_of_contents: { headingLevels: [2, 3, 4], sticky: true },
   appointment_card: { heading: 'Book an Appointment', buttonLabel: 'Schedule Now', targetUrl: 'https://example.com/appointments' },
   newsletter_card: { heading: 'Subscribe to Newsletter', description: 'Get health tips.', buttonLabel: 'Subscribe' },
+  blog_categories: { heading: 'Categories', maxItems: 8, showCount: false },
+  recent_related_blogs: { heading: '', mode: 'tabs', maxItems: 4, showImage: true, showDate: true },
   spacer: { size: 'medium' },
   divider: { style: 'solid' }
 };
@@ -89,6 +91,9 @@ export function normalizeCustomTemplateSettings(rawConfig: unknown): unknown {
           if (component.componentKey === 'divider' && settings.style === undefined && settings.variant !== undefined) {
             settings.style = settings.variant === 'dots' ? 'dashed' : settings.variant;
             delete settings.variant;
+          }
+          if (component.componentKey === 'faq' && settings.layout === 'accordion') {
+            settings.layout = 'qa_list';
           }
           let blockId = component.blockId;
           if (component.componentKey === 'rich_article_content') {

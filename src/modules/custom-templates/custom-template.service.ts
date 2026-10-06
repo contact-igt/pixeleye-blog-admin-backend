@@ -2,7 +2,7 @@ import { Op, type Transaction } from 'sequelize';
 import { sequelize } from '../../config/database.js';
 import { ApiError } from '../../utils/api-error.js';
 import { writeAuthAuditLog } from '../admin/auth/auth-audit.service.js';
-import { validateCustomTemplateLayout } from '../blogs/custom-templates/custom-template.validation.js';
+import { assertSingleActiveHero, validateCustomTemplateLayout } from '../blogs/custom-templates/custom-template.validation.js';
 import { CUSTOM_TEMPLATE_SCHEMA_VERSION } from '../blogs/custom-templates/custom-template.types.js';
 import { BlogVersion } from '../blogs/blog-version.model.js';
 import {
@@ -132,6 +132,7 @@ export function createCustomTemplateService() {
       assertCreate(actor);
       const input = createCustomTemplateSchema.parse(raw);
       const layout = validateCustomTemplateLayout(input.layout_config_json);
+      assertSingleActiveHero(layout);
       return sequelize.transaction(async (transaction) => {
         const template = await CustomTemplate.create(
           { name: input.name, description: input.description ?? null, status: 'draft', ownerId: actor.id, lockVersion: 1, createdBy: actor.id, updatedBy: actor.id } as any,
@@ -183,6 +184,7 @@ export function createCustomTemplateService() {
     async saveCustomTemplateVersion(id: string, raw: unknown, actor: CustomTemplateActor) {
       const input = saveCustomTemplateVersionSchema.parse(raw);
       const layout = validateCustomTemplateLayout(input.layout_config_json);
+      assertSingleActiveHero(layout);
       return sequelize.transaction(async (transaction) => {
         const template = await findTemplateOrThrow(id, { transaction, lock: true });
         assertVersion(actor, template);

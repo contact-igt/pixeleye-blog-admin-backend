@@ -18,6 +18,7 @@ export function createBlogRouter(): Router {
 
   router.get('/templates', controller.templates);
   router.get('/trash', controller.trashList);
+  router.get('/categories', controller.categories);
   router.post('/', requireRole('super_admin', 'editor', 'author'), controller.create);
   router.get('/', controller.list);
   router.get('/:id/publish-checklist', controller.checklist);
