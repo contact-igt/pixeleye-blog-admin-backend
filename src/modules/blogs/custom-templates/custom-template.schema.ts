@@ -51,7 +51,7 @@ const medicalCtaSettingsSchema = z.object({
 }).strict();
 
 const faqSettingsSchema = z.object({
-  layout: z.enum(['accordion', 'image_accordion']),
+  layout: z.enum(['accordion', 'image_accordion', 'qa_list']),
   defaultOpen: z.enum(['first', 'none'])
 }).strict();
 
@@ -92,6 +92,20 @@ const newsletterCardSettingsSchema = z.object({
   buttonLabel: text(60)
 }).strict();
 
+const blogCategoriesSettingsSchema = z.object({
+  heading: text(120),
+  maxItems: z.number().int().min(1).max(20),
+  showCount: z.boolean()
+}).strict();
+
+const recentRelatedBlogsSettingsSchema = z.object({
+  heading: text(120),
+  mode: z.enum(['recent', 'related', 'tabs']),
+  maxItems: z.number().int().min(1).max(10),
+  showImage: z.boolean(),
+  showDate: z.boolean()
+}).strict();
+
 const spacerSettingsSchema = z.object({
   size: z.enum(['small', 'medium', 'large'])
 }).strict();
@@ -117,6 +131,8 @@ export const componentInstanceSchema = z.discriminatedUnion('componentKey', [
   z.object({ id: text(64), componentKey: z.literal('article_table_of_contents'), blockId: z.undefined().optional(), settings: tocSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('appointment_card'), blockId: z.undefined().optional(), settings: appointmentCardSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('newsletter_card'), blockId: z.undefined().optional(), settings: newsletterCardSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('blog_categories'), blockId: z.undefined().optional(), settings: blogCategoriesSettingsSchema, enabled: z.boolean() }).strict(),
+  z.object({ id: text(64), componentKey: z.literal('recent_related_blogs'), blockId: z.undefined().optional(), settings: recentRelatedBlogsSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('spacer'), blockId: z.undefined().optional(), settings: spacerSettingsSchema, enabled: z.boolean() }).strict(),
   z.object({ id: text(64), componentKey: z.literal('divider'), blockId: z.undefined().optional(), settings: dividerSettingsSchema, enabled: z.boolean() }).strict()
 ]);

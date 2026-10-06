@@ -43,6 +43,8 @@ export interface BlogBlocksDocument {
   // Present only for `custom_template` blogs. Each key is a custom template component instance's
   // unique blockId, so repeated placements of the same componentKey hold independent content.
   custom_instances?: Record<string, CustomBlockInstanceContent>;
+  // Custom template blogs only: ids of published blogs the author hand-picked for the "Related" list.
+  related_blog_ids?: string[];
 }
 
 export function normalizeTemplate2Phone(value: string): string {
@@ -74,7 +76,7 @@ export function createDefaultTemplate2Sidebar(): Template2SidebarConfig {
 }
 
 export type CustomBlockInstanceContent =
-  | { componentKey: 'hero'; category: string; breadcrumb: string[]; reviewer: { name: string; credentials: string }; reading_time_minutes: number | null }
+  | { componentKey: 'hero'; category: string; breadcrumb: string[]; reviewer: { name: string; credentials: string }; reading_time_minutes: number | null; header_style?: 'standard' | 'article' }
   | { componentKey: 'rich_article_content'; enabled: boolean; content_json: unknown; html: string }
   | { componentKey: 'key_takeaways'; enabled: boolean; heading: string; items: string[] }
   | { componentKey: 'image_comparison'; enabled: boolean; heading: string; items: Array<{ media_id: string | null; title: string; description: string }> }

@@ -1,8 +1,16 @@
 const path = require('path');
+require('dotenv').config();
+
+// sequelize-cli names its environment from NODE_ENV and ignores APP_STAGE, so it printed
+// `Using environment "development"` even when APP_STAGE=production. The database credentials were already
+// chosen from APP_STAGE (see sequelize-config.cjs); this only makes the CLI's environment match that choice.
+if (!process.env.NODE_ENV) {
+  const stage = process.env.APP_STAGE;
+  process.env.NODE_ENV = stage === 'production' || stage === 'prod' ? 'production' : 'development';
+}
 
 module.exports = {
   config: path.resolve('src/database/sequelize-config.cjs'),
   'migrations-path': path.resolve('src/database/migrations'),
   'seeders-path': path.resolve('src/database/seeders')
 };
-

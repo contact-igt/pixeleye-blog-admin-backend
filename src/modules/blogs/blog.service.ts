@@ -8,6 +8,7 @@ import { Blog, type BlogStatus } from './blog.model.js';
 import { BlogVersion } from './blog-version.model.js';
 import { blogBlockCompletionErrors, collectBlogBlockMediaIds, customInstanceCompletionErrors, isEnabledBlogBlockComplete, normalizeBlogBlocks, template2SidebarCompletionErrors } from './blog-block.validation.js';
 import type { BlogBlocksDocument } from './blog-block.types.js';
+import { aggregateBlogCategories } from './blog-categories.js';
 import {
   hasTemplateSelectionChanged,
   INTERNAL_CUSTOM_TEMPLATE_KEY,
@@ -476,6 +477,24 @@ function listWhere(query: BlogListQuery, actor: BlogActor, trashed = false) { co
 export function createBlogService() {
   return {
     listTemplates() { return listBlogTemplates(); },
+
+    // Distinct categories already used by non-trashed blogs (draft or published), for the select-or-type field.
+    async listBlogCategories() {
+      const blogs = await Blog.findAll({
+        where: { status: { [Op.ne]: 'trashed' } },
+        attributes: ['id'],
+        include: [
+          { model: BlogVersion, as: 'currentDraftVersion', attributes: ['id', 'blocksJson'], required: false },
+          { model: BlogVersion, as: 'currentPublishedVersion', attributes: ['id', 'blocksJson'], required: false }
+        ]
+      });
+      return aggregateBlogCategories(blogs.map((blog) => {
+        const data = plain(blog);
+        const draft = data.currentDraftVersion ?? data.current_draft_version;
+        const published = data.currentPublishedVersion ?? data.current_published_version;
+        return [draft?.blocksJson ?? draft?.blocks_json, published?.blocksJson ?? published?.blocks_json];
+      }));
+    },
 
     async createBlog(raw: unknown, actor: BlogActor) {
       assertCreate(actor);

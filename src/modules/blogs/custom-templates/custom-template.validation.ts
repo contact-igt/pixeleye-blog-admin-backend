@@ -232,6 +232,34 @@ export function validateCustomTemplateTableCapacity(
   }
 }
 
+/**
+ * A template may contain at most one active Hero Banner. Enforced only when a template is created or a new
+ * version is saved (see custom-template.service.ts) so templates saved earlier keep loading and keep working.
+ */
+export function assertSingleActiveHero(layout: CustomTemplateLayoutConfigV1): void {
+  const heroPaths: string[] = [];
+  layout.sections.forEach((section, secIdx) => {
+    if (section.enabled === false) return;
+    section.slots.forEach((slot, slotIdx) => {
+      slot.components.forEach((comp, compIdx) => {
+        if (comp.componentKey === 'hero' && comp.enabled !== false) {
+          heroPaths.push(`sections[${secIdx}].slots[${slotIdx}].components[${compIdx}]`);
+        }
+      });
+    });
+  });
+  if (heroPaths.length > 1) {
+    throw new ApiError(
+      422,
+      'A Custom Template can contain only one Hero Banner.',
+      heroPaths.slice(1).map((path) => ({
+        field: `layout_config_json.${path}.componentKey`,
+        message: 'Only one Hero Banner is allowed per template. Remove or disable this extra Hero Banner.'
+      }))
+    );
+  }
+}
+
 export function isValidCustomTemplateConfig(rawConfig: unknown, blocksDoc?: BlogBlocksDocument | null): boolean {
   try {
     validateCustomTemplateLayout(rawConfig, blocksDoc);

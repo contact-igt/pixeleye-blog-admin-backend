@@ -62,7 +62,7 @@ const template2SidebarSchema = z.object({
 }).strict();
 
 const customInstanceContentSchema = z.discriminatedUnion('componentKey', [
-  z.object({ componentKey: z.literal('hero'), category: text(100), breadcrumb: z.array(text(80)).max(5), reviewer: z.object({ name: text(120), credentials: text(160) }).strict(), reading_time_minutes: z.number().int().min(1).max(240).nullable() }).strict(),
+  z.object({ componentKey: z.literal('hero'), category: text(100), breadcrumb: z.array(text(80)).max(5), reviewer: z.object({ name: text(120), credentials: text(160) }).strict(), reading_time_minutes: z.number().int().min(1).max(240).nullable(), header_style: z.enum(['standard', 'article']).optional() }).strict(),
   z.object({ componentKey: z.literal('rich_article_content'), enabled: z.boolean(), content_json: z.unknown(), html: text(200000) }).strict(),
   z.object({ componentKey: z.literal('key_takeaways'), enabled: z.boolean(), heading: text(120), items: z.array(text(240)).max(5) }).strict(),
   z.object({ componentKey: z.literal('image_comparison'), enabled: z.boolean(), heading: text(120), items: z.array(z.object({ media_id: mediaId, title: text(120), description: text(500) }).strict()).max(6) }).strict(),
@@ -98,7 +98,11 @@ const blogBlocksSchema = z.object({
     disclaimer: z.object({ enabled: z.literal(true, { error: 'Medical disclaimer cannot be disabled' }), text: text(1000) }).strict()
   }).strict(),
   sidebar: template2SidebarSchema,
-  custom_instances: z.record(blockIdSchema, customInstanceContentSchema).optional()
+  custom_instances: z.record(blockIdSchema, customInstanceContentSchema).optional(),
+  related_blog_ids: z.array(z.string().trim().regex(/^\d+$/, 'Related blog ID must be numeric'))
+    .max(10, 'Select at most 10 related blogs')
+    .refine((ids) => new Set(ids).size === ids.length, 'Related blogs must be unique')
+    .optional()
 }).strict();
 
 function blockErrors(error: ZodError) { return error.issues.map((issue) => ({ field: `blocks_json.${issue.path.join('.')}`, message: issue.message })); }
