@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateCustomTemplateLayout } from '../src/modules/blogs/custom-templates/custom-template.validation.js';
-import { CUSTOM_TEMPLATE_SETTING_VALUES } from '../src/modules/blogs/custom-templates/custom-template.settings.js';
+import { CUSTOM_TEMPLATE_SETTING_VALUES, normalizeCustomTemplateSettings } from '../src/modules/blogs/custom-templates/custom-template.settings.js';
 import { normalizeStoredTemplate } from '../src/modules/blogs/blog-template.registry.js';
 import { createDefaultBlogBlocks } from '../src/modules/blogs/blog-block.types.js';
 
@@ -128,6 +128,17 @@ describe('Custom Template settings backend contract', () => {
     };
 
     expect(validateCustomTemplateLayout(value, blocks).sections[0].slots[0].components).toHaveLength(2);
+  });
+
+  it('reserves article_content for the first Rich Article Content placement', () => {
+    const value = layout();
+    value.sections[0].slots[0].components.push(
+      { id: 'article-main', componentKey: 'rich_article_content', blockId: 'legacy_article_id', enabled: true, settings: {} },
+      { id: 'article-extra', componentKey: 'rich_article_content', blockId: 'article_extra', enabled: true, settings: {} }
+    );
+
+    const components = (normalizeCustomTemplateSettings(value) as any).sections[0].slots[0].components;
+    expect(components.map((component: any) => component.blockId)).toEqual(['article_content', 'article_extra']);
   });
 
   it('normalizes missing defaults and proven historical element aliases without mutating the source', () => {
