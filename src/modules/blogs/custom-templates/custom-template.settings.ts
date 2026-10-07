@@ -99,7 +99,7 @@ export function normalizeCustomTemplateSettings(rawConfig: unknown): unknown {
           if (component.componentKey === 'rich_article_content') {
             if (!hasMainArticleContent) {
               hasMainArticleContent = true;
-              blockId = blockId || 'article_content';
+              blockId = 'article_content';
             } else if (!blockId || blockId === 'article_content' || seenBlockIds.has(blockId)) {
               blockId = component.id ? `article_${component.id}` : `rich_article_extra_${seenBlockIds.size + 1}`;
             }

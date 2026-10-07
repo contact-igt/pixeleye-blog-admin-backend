@@ -47,6 +47,23 @@ const blogSortColumns: Record<string, string> = { created_at: 'createdAt', updat
 const trashSortColumns: Record<string, string> = { created_at: 'createdAt', updated_at: 'updatedAt', published_at: 'publishedAt', status: 'status', trashed_at: 'trashedAt' };
 
 function plain(model: any) { return typeof model?.get === 'function' ? model.get({ plain: true }) : model; }
+function effectiveContentJson(version: any): unknown {
+  const data = plain(version);
+  const content = data?.contentJson ?? data?.content_json;
+  if (!isBlogContentEmpty(content)) return content;
+  const blocks = normalizeBlogBlocks(data?.blocksJson ?? data?.blocks_json);
+  const config = data?.templateConfigJson ?? data?.template_config_json;
+  if (!config || typeof config !== 'object') return content;
+  for (const section of (config as any).sections ?? []) {
+    if (section?.enabled === false) continue;
+    for (const slot of section?.slots ?? []) for (const component of slot?.components ?? []) {
+      if (component?.enabled === false || component?.componentKey !== 'rich_article_content' || component?.blockId === 'article_content') continue;
+      const legacyContent = blocks.custom_instances?.[component.blockId];
+      return legacyContent?.componentKey === 'rich_article_content' && !isBlogContentEmpty(legacyContent.content_json) ? legacyContent.content_json : content;
+    }
+  }
+  return content;
+}
 function safeAdmin(admin: any) { const data = plain(admin); return data ? { id: String(data.id), name: data.name, email: data.email, role: data.role } : null; }
 function mediaSummary(media: any) {
   const data = plain(media);
@@ -222,7 +239,7 @@ function versionSummary(version: any, includeContent = true, mediaMap?: Map<stri
     version_type: data.versionType ?? data.version_type,
     title: data.title,
     excerpt: data.excerpt,
-    ...(includeContent ? { content_json: data.contentJson ?? data.content_json, content_html: data.contentHtml ?? data.content_html } : {}),
+    ...(includeContent ? { content_json: effectiveContentJson(data), content_html: data.contentHtml ?? data.content_html } : {}),
     blocks_json: hydratedBlocks,
     seo_title: data.seoTitle ?? data.seo_title,
     seo_description: data.seoDescription ?? data.seo_description,
@@ -417,7 +434,7 @@ function publishChecklist(version: any, blog: any) {
     complete('title', Boolean(draft.title?.trim()), 'Title is complete', 'Add a title'),
     complete('slug', Boolean(blogData.slug?.trim()), 'Slug is complete', 'Add a slug'),
     complete('excerpt', Boolean(draft.excerpt?.trim()), 'Excerpt is complete', 'Add an excerpt'),
-    complete('content', !isBlogContentEmpty(draft.contentJson ?? draft.content_json), 'Content is complete', 'Add blog content'),
+    complete('content', !isBlogContentEmpty(effectiveContentJson(draft)), 'Content is complete', 'Add blog content'),
     complete('featured_media', Boolean(blogData.featuredMediaId ?? blogData.featured_media_id), 'Featured image is complete', 'Select an active featured image'),
     complete('featured_media_alt_text', Boolean(media?.altText?.trim() ?? media?.alt_text?.trim()), 'Featured image alt text is complete', 'Add alt text to the selected featured image'),
     complete('seo_title', Boolean(draft.seoTitle?.trim() ?? draft.seo_title?.trim()), 'SEO title is complete', 'SEO title is recommended', true),
@@ -663,7 +680,8 @@ export function createBlogService() {
         const blocks = reconcileBlocksForTemplate(normalizeBlogBlocks(draft.blocksJson), template, false);
         await validateBlockMedia(blocks, transaction);
         await validateFeaturedMedia(blog.featuredMediaId, transaction);
-        publishReady({ ...plain(draft), blocksJson: blocks }, blog);
+        const contentJson = effectiveContentJson(draft);
+        publishReady({ ...plain(draft), contentJson, blocksJson: blocks }, blog);
         const latest = await BlogVersion.max('versionNumber', { where: { blogId: blog.id }, transaction }) as number | null;
         const versionNumber = (latest ?? 1) + 1;
         const published = await BlogVersion.create({
@@ -672,8 +690,8 @@ export function createBlogService() {
           versionType: 'published',
           title: draft.title,
           excerpt: draft.excerpt,
-          contentJson: draft.contentJson,
-          contentHtml: draft.contentHtml,
+          contentJson,
+          contentHtml: sanitizeGeneratedBlogHtml(generateBlogHtmlFromJson(contentJson)),
           seoTitle: draft.seoTitle,
           seoDescription: draft.seoDescription,
           canonicalUrl: draft.canonicalUrl,
